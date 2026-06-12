@@ -5,7 +5,7 @@ import { useTheme } from '../context/ThemeContext';
 import { useAuth } from '../context/AuthContext';
 import { LayoutDashboard, Ticket as TicketIcon, PlusCircle, Headphones, Users, Sun, Moon, Settings, Shield, BarChart3, BookOpen, User, UserCog, UserCheck, LogOut, Building2, Bell } from 'lucide-react';
 import { Toaster } from 'sonner@2.0.3';
-import { Role, BRANCH_CONFIG, getActiveShift } from '../types';
+import { Role, BRANCH_CONFIG, getActiveShift, DEPARTMENT_LABELS } from '../types';
 import { NotificationBell } from './NotificationBell';
 import { useNotifications } from '../context/NotificationContext';
 
@@ -209,6 +209,11 @@ export const Layout = () => {
             <div className="flex-1 min-w-0">
               <p className="text-sm text-white truncate">{currentUser.name}</p>
               <p className="text-xs text-slate-400 truncate">{role}</p>
+              {currentUser.department && (
+                <p className="text-xs text-slate-500 truncate">
+                  {DEPARTMENT_LABELS[currentUser.department as keyof typeof DEPARTMENT_LABELS] ?? currentUser.department}
+                </p>
+              )}
             </div>
           </div>
         </div>

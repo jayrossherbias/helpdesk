@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useAuth, Account } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
-import { Role, Branch, BRANCHES, BRANCH_CONFIG } from '../types';
+import { Role, Branch, BRANCHES, BRANCH_CONFIG, DEPARTMENT_LABELS } from '../types';
 import { UserPlus, Shield, ShieldOff, Trash2, KeyRound, Pencil, X, Check, Search, Users } from 'lucide-react';
 import { toast } from 'sonner@2.0.3';
 import { HSelect } from '../components/HSelect';
@@ -146,7 +146,7 @@ export const UserManagement = () => {
           <table className="w-full">
             <thead>
               <tr className={isDark ? 'bg-slate-800/50' : 'bg-gray-50'}>
-                {['Name', 'Email', 'Branch', 'Role', 'Status', 'Created', 'Actions'].map(h => (
+                {['Name', 'Email', 'Branch', 'Role', 'Department', 'Status', 'Created', 'Actions'].map(h => (
                   <th key={h} className={`px-5 py-3 text-left text-xs uppercase tracking-wider ${isDark ? 'text-slate-400' : 'text-gray-500'}`}>{h}</th>
                 ))}
               </tr>
@@ -202,6 +202,12 @@ export const UserManagement = () => {
                       ) : (
                         <span className={`text-xs px-2.5 py-1 rounded-full ${isDark ? roleBadgeColors[a.role].dark : roleBadgeColors[a.role].light}`}>{a.role}</span>
                       )}
+                    </td>
+                    <td className={`px-5 py-4 text-xs ${isDark ? 'text-slate-400' : 'text-gray-500'}`}>
+                      {a.department
+                        ? (DEPARTMENT_LABELS[a.department as keyof typeof DEPARTMENT_LABELS] ?? a.department)
+                        : <span className={isDark ? 'text-slate-700' : 'text-gray-300'}>—</span>
+                      }
                     </td>
                     <td className="px-5 py-4">
                       <span className={`text-xs px-2.5 py-1 rounded-full ${a.active ? (isDark ? 'bg-green-500/10 text-green-400' : 'bg-green-100 text-green-700') : (isDark ? 'bg-red-500/10 text-red-400' : 'bg-red-100 text-red-700')}`}>

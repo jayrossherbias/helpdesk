@@ -24,10 +24,12 @@ interface HSelectProps {
 }
 
 interface DropPos {
-  top: number;
+  top?: number;
+  bottom?: number;
   left: number;
   width: number;
   minWidth: number;
+  maxHeight: number;
 }
 
 export const HSelect = ({
@@ -40,22 +42,31 @@ export const HSelect = ({
   size = 'md',
 }: HSelectProps) => {
   const [open, setOpen]       = useState(false);
-  const [pos, setPos]         = useState<DropPos>({ top: 0, left: 0, width: 0, minWidth: 160 });
+  const [pos, setPos]         = useState<DropPos>({ top: 0, left: 0, width: 0, minWidth: 160, maxHeight: 320 });
   const buttonRef             = useRef<HTMLButtonElement>(null);
   const dropRef               = useRef<HTMLDivElement>(null);
 
   const selectedLabel = options.find(o => o.value === value)?.label ?? value;
 
-  /* Position the floating dropdown below the trigger button */
+  /* Position the floating dropdown — opens downward unless there's more room above */
   const calcPos = () => {
     if (!buttonRef.current) return;
-    const r = buttonRef.current.getBoundingClientRect();
-    setPos({
-      top:      r.bottom + 4,
-      left:     r.left,
-      width:    r.width,
-      minWidth: Math.max(r.width, 160),
-    });
+    const r  = buttonRef.current.getBoundingClientRect();
+    const vh = window.innerHeight;
+
+    const itemH      = size === 'sm' ? 28 : 36;
+    const estimatedH = options.length * itemH + 8;
+
+    const spaceBelow = vh - r.bottom - 8;
+    const spaceAbove = r.top - 8;
+    const openUpward = spaceBelow < estimatedH && spaceAbove > spaceBelow;
+
+    const base = { left: r.left, width: r.width, minWidth: Math.max(r.width, 160) };
+
+    setPos(openUpward
+      ? { ...base, bottom: vh - r.top + 4, maxHeight: Math.min(estimatedH, spaceAbove) }
+      : { ...base, top: r.bottom + 4,      maxHeight: Math.min(estimatedH, spaceBelow) }
+    );
   };
 
   const toggle = () => {
@@ -106,12 +117,15 @@ export const HSelect = ({
     <div
       ref={dropRef}
       style={{
-        position: 'fixed',
-        top:      pos.top,
-        left:     pos.left,
-        width:    pos.width,
-        minWidth: pos.minWidth,
-        zIndex:   9999,
+        position:  'fixed',
+        top:       pos.top,
+        bottom:    pos.bottom,
+        left:      pos.left,
+        width:     pos.width,
+        minWidth:  pos.minWidth,
+        maxHeight: pos.maxHeight,
+        overflowY: 'auto',
+        zIndex:    9999,
       }}
       className={[
         'rounded-lg border shadow-xl overflow-hidden',

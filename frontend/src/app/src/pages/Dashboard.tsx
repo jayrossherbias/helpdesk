@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { Navigate, useNavigate } from 'react-router';
 import { useTickets } from '../context/TicketContext';
 import { useTheme } from '../context/ThemeContext';
 import {
@@ -67,6 +68,7 @@ const complianceBar   = (pct: number) =>
 const BranchDashboard = () => {
   const { tickets, currentUser } = useTickets();
   const { theme } = useTheme();
+  const navigate  = useNavigate();
   const isDark    = theme === 'dark';
   const shift     = getActiveShift();
   const shiftMeta = SHIFT_META[shift];
@@ -147,7 +149,7 @@ const BranchDashboard = () => {
 
       {/* ── CRITICAL ALERT BANNER ── */}
       {criticalOpen > 0 && (
-        <div className={`flex items-center gap-4 px-5 py-4 rounded-xl border ${isDark ? 'bg-red-500/5 border-red-500/25' : 'bg-red-50 border-red-200'}`}>
+        <div onClick={() => navigate('/tickets?status=Open&priority=Critical')} className={`flex items-center gap-4 px-5 py-4 rounded-xl border cursor-pointer transition-opacity hover:opacity-90 ${isDark ? 'bg-red-500/5 border-red-500/25' : 'bg-red-50 border-red-200'}`}>
           <div className={`p-2 rounded-lg shrink-0 ${isDark ? 'bg-red-500/15' : 'bg-red-100'}`}>
             <AlertTriangle size={18} className="text-red-500" />
           </div>
@@ -178,6 +180,7 @@ const BranchDashboard = () => {
             lightClr:  'text-amber-600',
             lightBg:   'bg-amber-100',
             accent:    isDark ? 'border-l-amber-500/40' : 'border-l-amber-400',
+            href:      '/tickets?status=Open',
           },
           {
             label:     'In Progress',
@@ -189,6 +192,7 @@ const BranchDashboard = () => {
             lightClr:  'text-blue-600',
             lightBg:   'bg-blue-100',
             accent:    isDark ? 'border-l-blue-500/40' : 'border-l-blue-400',
+            href:      '/tickets?status=In Progress',
           },
           {
             label:     'Pending',
@@ -200,6 +204,7 @@ const BranchDashboard = () => {
             lightClr:  'text-orange-600',
             lightBg:   'bg-orange-100',
             accent:    isDark ? 'border-l-orange-500/40' : 'border-l-orange-400',
+            href:      '/tickets?escalation=Escalated',
           },
           {
             label:     'Resolved Today',
@@ -211,9 +216,10 @@ const BranchDashboard = () => {
             lightClr:  'text-green-600',
             lightBg:   'bg-green-100',
             accent:    isDark ? 'border-l-green-500/40' : 'border-l-green-400',
+            href:      '/tickets?status=Resolved',
           },
         ].map(s => (
-          <div key={s.label} className={`${card} p-3.5 border-l-4 ${s.accent}`}>
+          <div key={s.label} onClick={() => navigate(s.href)} className={`${card} p-3.5 border-l-4 ${s.accent} cursor-pointer hover:ring-1 ${isDark ? 'hover:ring-slate-700' : 'hover:ring-gray-300'} transition-shadow`}>
             <div className="flex items-start justify-between mb-2">
               <p className={`text-xs uppercase tracking-wider ${isDark ? 'text-slate-400' : 'text-gray-500'}`}>{s.label}</p>
               <div className={`p-1.5 rounded-lg ${isDark ? s.darkBg : s.lightBg}`}>
@@ -317,7 +323,7 @@ const BranchDashboard = () => {
               const remHrs    = Math.max(0, remaining / 3_600_000);
               const ps        = PRIORITY_STYLE[t.priority];
               return (
-                <div key={t.id} className={`flex flex-wrap items-center gap-4 px-5 py-4 ${isDark ? 'hover:bg-red-500/5' : 'hover:bg-red-100/40'} transition-colors`}>
+                <div key={t.id} onClick={() => navigate(`/tickets/${t.id}`)} className={`flex flex-wrap items-center gap-4 px-5 py-4 cursor-pointer ${isDark ? 'hover:bg-red-500/5' : 'hover:bg-red-100/40'} transition-colors`}>
                   {/* Priority badge */}
                   <span className={`text-xs px-2.5 py-1 rounded-full border font-medium shrink-0 ${isDark ? ps.badge : ps.badgeLight}`}>
                     {t.priority}
@@ -357,7 +363,7 @@ const BranchDashboard = () => {
                         {slaStatus === 'Breached' ? 'BREACHED' : remHrs < 1 ? `${Math.round(remHrs * 60)}m left` : `${remHrs.toFixed(1)}h left`}
                       </span>
                     )}
-                    <span className={`text-xs ${isDark ? 'text-slate-600' : 'text-gray-400'}`}>#{t.id}</span>
+                    <span className={`text-xs ${isDark ? 'text-slate-600' : 'text-gray-400'}`}>{t.ticket_number ?? `#${t.id.slice(0, 8)}`}</span>
                   </div>
                 </div>
               );
@@ -455,7 +461,7 @@ const BranchDashboard = () => {
                 const slaStatus = getSLAStatus(t);
                 const ps        = PRIORITY_STYLE[t.priority];
                 return (
-                  <div key={t.id} className={`flex items-center gap-4 px-6 py-3.5 ${isDark ? 'hover:bg-slate-800/40' : 'hover:bg-gray-50'} transition-colors`}>
+                  <div key={t.id} onClick={() => navigate(`/tickets/${t.id}`)} className={`flex items-center gap-4 px-6 py-3.5 cursor-pointer ${isDark ? 'hover:bg-slate-800/40' : 'hover:bg-gray-50'} transition-colors`}>
                     <span className={`text-xs px-2 py-0.5 rounded-full border shrink-0 ${isDark ? ps.badge : ps.badgeLight}`}>
                       {t.priority}
                     </span>
@@ -473,7 +479,7 @@ const BranchDashboard = () => {
                       }`}>
                         SLA: {slaStatus}
                       </span>
-                      <span className={`text-xs ${isDark ? 'text-slate-600' : 'text-gray-400'}`}>#{t.id}</span>
+                      <span className={`text-xs ${isDark ? 'text-slate-600' : 'text-gray-400'}`}>{t.ticket_number ?? `#${t.id.slice(0, 8)}`}</span>
                     </div>
                   </div>
                 );
@@ -492,6 +498,7 @@ const BranchDashboard = () => {
 const GlobalDashboard = () => {
   const { tickets, currentUser } = useTickets();
   const { theme }  = useTheme();
+  const navigate   = useNavigate();
   const isDark     = theme === 'dark';
   const shift      = getActiveShift();
   const shiftMeta  = SHIFT_META[shift];
@@ -569,6 +576,7 @@ const GlobalDashboard = () => {
             darkClr: 'text-amber-400', darkBg:  'bg-amber-500/10',
             lightClr:'text-amber-600', lightBg: 'bg-amber-100',
             accent:  isDark ? 'border-l-amber-500/40' : 'border-l-amber-400',
+            href:    '/tickets?status=Open',
           },
           {
             label:   'Critical Tickets Systemwide',
@@ -578,6 +586,7 @@ const GlobalDashboard = () => {
             darkClr: 'text-red-400',    darkBg:  'bg-red-500/10',
             lightClr:'text-red-600',    lightBg: 'bg-red-100',
             accent:  isDark ? 'border-l-red-500/40' : 'border-l-red-400',
+            href:    '/tickets?priority=Critical',
           },
           {
             label:   'Escalations Pending',
@@ -587,9 +596,10 @@ const GlobalDashboard = () => {
             darkClr: 'text-orange-400', darkBg:  'bg-orange-500/10',
             lightClr:'text-orange-600', lightBg: 'bg-orange-100',
             accent:  isDark ? 'border-l-orange-500/40' : 'border-l-orange-400',
+            href:    '/tickets?escalation=Escalated',
           },
         ].map(s => (
-          <div key={s.label} className={`${card} p-5 border-l-4 ${s.accent}`}>
+          <div key={s.label} onClick={() => navigate(s.href)} className={`${card} p-5 border-l-4 ${s.accent} cursor-pointer hover:ring-1 ${isDark ? 'hover:ring-slate-700' : 'hover:ring-gray-300'} transition-shadow`}>
             <div className="flex items-start justify-between mb-4">
               <p className={`text-xs uppercase tracking-wider leading-tight max-w-[140px] ${isDark ? 'text-slate-400' : 'text-gray-500'}`}>{s.label}</p>
               <div className={`p-2 rounded-lg shrink-0 ${isDark ? s.darkBg : s.lightBg}`}>
@@ -660,7 +670,9 @@ const GlobalDashboard = () => {
                 return (
                   <tr
                     key={b}
-                    onClick={() => setHoveredBranch(isHovered ? null : b)}
+                    onClick={() => navigate(`/tickets?branch=${encodeURIComponent(b)}`)}
+                    onMouseEnter={() => setHoveredBranch(b)}
+                    onMouseLeave={() => setHoveredBranch(null)}
                     className={`cursor-pointer transition-colors ${
                       isHovered
                         ? isDark ? 'bg-slate-800' : 'bg-blue-50'
@@ -815,7 +827,7 @@ const GlobalDashboard = () => {
               const ps  = PRIORITY_STYLE[t.priority];
               const cfg = BRANCH_CONFIG[t.branch];
               return (
-                <div key={t.id} className={`flex flex-wrap items-center gap-4 px-5 py-4 ${isDark ? 'hover:bg-orange-500/5' : 'hover:bg-orange-100/30'} transition-colors`}>
+                <div key={t.id} onClick={() => navigate(`/tickets/${t.id}`)} className={`flex flex-wrap items-center gap-4 px-5 py-4 cursor-pointer ${isDark ? 'hover:bg-orange-500/5' : 'hover:bg-orange-100/30'} transition-colors`}>
                   <span className={`w-2.5 h-2.5 rounded-full shrink-0 ${cfg.dotClass}`} title={t.branch} />
                   <span className={`text-xs px-2 py-0.5 rounded-full border shrink-0 ${isDark ? ps.badge : ps.badgeLight}`}>{t.priority}</span>
                   <div className="flex-1 min-w-0">
@@ -824,7 +836,7 @@ const GlobalDashboard = () => {
                       {t.branch} · {t.agentsAffected} agents · {t.shift} shift · {t.category}
                     </p>
                   </div>
-                  <span className={`text-xs ${isDark ? 'text-slate-600' : 'text-gray-400'}`}>#{t.id}</span>
+                  <span className={`text-xs ${isDark ? 'text-slate-600' : 'text-gray-400'}`}>{t.ticket_number ?? `#${t.id.slice(0, 8)}`}</span>
                 </div>
               );
             })}
@@ -841,6 +853,11 @@ const GlobalDashboard = () => {
 // ══════════════════════════════════════════════════════════════
 export const Dashboard = () => {
   const { currentUser } = useTickets();
+
+  if (currentUser.role === 'Agent (end-user)') {
+    return <Navigate to="/tickets" replace />;
+  }
+
   const isGlobal =
     currentUser.role === 'Main Branch IT Manager' ||
     (currentUser.role === 'Branch IT Supervisor' && currentUser.branch === 'Main Branch');

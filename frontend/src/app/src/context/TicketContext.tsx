@@ -4,7 +4,8 @@ import { toast } from 'sonner';
 import { useAuth } from './AuthContext';
 import { useNotifications } from './NotificationContext';
 import {
-  Ticket, Category, Priority, Status, TicketHistory, Shift, EscalationStatus,
+  Ticket, Category, Priority, Status, TicketHistory, Shift, EscalationStatus, Urgency,
+  RelatedTicketRef,
 } from '../types';
 import type { Ticket as ApiTicket } from '../../../types';
 import {
@@ -13,6 +14,7 @@ import {
   createTicket as apiCreateTicket,
   updateTicketStatus as apiUpdateTicketStatus,
   escalateTicket as apiEscalateTicket,
+  markFloorWide as apiMarkFloorWide,
 } from '../../../api/tickets';
 
 // ── Adapter maps ───────────────────────────────────────────────
@@ -49,20 +51,61 @@ const FIGMA_STATUS_TO_API: Record<Status, string> = {
 
 function mapApiTicket(t: ApiTicket): Ticket {
   const escalationLog = (t.escalation_logs?.[0]) ?? t.escalation_log ?? null;
+
+  // Prefer server-side audit logs; fall back to a synthetic timeline for older tickets
+  let history: TicketHistory[];
+  if (t.logs && t.logs.length > 0) {
+    history = t.logs.map(l => ({
+      id:        l.id,
+      action:    l.action,
+      timestamp: l.created_at,
+      actor:     l.actor,
+    }));
+  } else {
+    // Derive a minimal timeline from available ticket fields
+    history = [];
+    const submitter = t.submitted_by?.username ?? 'Unknown';
+    history.push({ id: `${t.id}-created`, action: `Ticket submitted by ${submitter}.`, timestamp: t.created_at, actor: submitter });
+    if (t.assigned_to) {
+      history.push({ id: `${t.id}-assigned`, action: `Auto-assigned to ${t.assigned_to.username} by routing engine.`, timestamp: t.created_at, actor: 'System' });
+    }
+    if (escalationLog) {
+      history.push({ id: `${t.id}-escalated`, action: `Escalated to Main Branch · Reason: ${escalationLog.reason}`, timestamp: escalationLog.escalated_at, actor: escalationLog.escalated_by?.username ?? 'Unknown' });
+      if (escalationLog.resolved_at) {
+        history.push({ id: `${t.id}-esc-resolved`, action: 'Escalation resolved by Main Branch.', timestamp: escalationLog.resolved_at, actor: 'Main Branch' });
+      }
+    }
+    if (t.status === 'resolved' && t.updated_at !== t.created_at) {
+      history.push({ id: `${t.id}-resolved`, action: 'Status changed to Resolved.', timestamp: t.updated_at, actor: 'System' });
+    }
+  }
+
+  const mapRelated = (r: import('../../../types').RelatedTicketRef): RelatedTicketRef => ({
+    id:           r.id,
+    ticketNumber: r.ticket_number ?? null,
+    title:        r.title,
+    category:     r.category,
+    status:       r.status,
+  });
+
   return {
     id:             t.id,
+    ticket_number:  t.ticket_number ?? null,
     title:          t.title,
     description:    t.description,
     category:       API_CATEGORY_TO_FIGMA[t.category] ?? 'VoIP & Dialer Issues',
     priority:       API_PRIORITY_TO_FIGMA[t.priority] ?? 'Low',
     status:         API_STATUS_TO_FIGMA[t.status] ?? 'Open',
+    urgency:        (t.urgency ?? 'minor_issue') as Urgency,
     assignee:       t.assigned_to?.username ?? 'Unassigned',
-    creator:        t.created_by?.username ?? 'Unknown',
+    creator:        t.submitted_by?.username ?? 'Unknown',
     branch:         (t.branch?.name ?? 'Main Branch') as any,
     shift:          API_SHIFT_TO_FIGMA[t.shift] ?? 'Morning',
     agentsAffected: t.agents_affected,
     floor:          t.floor_team,
     isFloorWide:    t.is_floor_wide,
+    relatedTo:      t.related_to ? mapRelated(t.related_to) : null,
+    followUps:      (t.follow_ups ?? []).map(mapRelated),
     escalationStatus: t.escalated
       ? (escalationLog?.resolved_at ? 'Resolved by Main Branch' : 'Escalated')
       : 'Not Escalated',
@@ -70,14 +113,15 @@ function mapApiTicket(t: ApiTicket): Ticket {
     escalationNotes: escalationLog?.reason,
     createdAt:      t.created_at,
     updatedAt:      t.updated_at,
-    history:        [] as TicketHistory[],
+    history,
   };
 }
 
 // ── Context type ───────────────────────────────────────────────
 interface TicketContextType {
   tickets: Ticket[];
-  currentUser: { id: string; name: string; role: any; branch: any };
+  currentUser: { id: string; name: string; role: any; branch: any; department: string | null };
+  markFloorWide: (id: string, floorTeam?: string) => Promise<void>;
   createTicket: (
     title: string,
     description: string,
@@ -86,9 +130,11 @@ interface TicketContextType {
     shift: Shift,
     floor: string,
     isFloorWide: boolean,
+    urgency: Urgency,
     priorityOverride?: Priority,
-    linkedIncident?: string
-  ) => void;
+    linkedIncident?: string,
+    relatedTicketNumber?: string
+  ) => Promise<boolean>;
   updateTicketStatus: (id: string, status: Status) => void;
   updateTicketPriority: (id: string, priority: Priority) => void;
   assignTicket: (id: string, assignee: string) => void;
@@ -104,8 +150,8 @@ export const TicketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const queryClient = useQueryClient();
 
   const currentUser = currentAccount
-    ? { id: currentAccount.id, name: currentAccount.name, role: currentAccount.role, branch: currentAccount.branch }
-    : { id: '', name: '', role: 'Agent (end-user)' as any, branch: 'Main Branch' as any };
+    ? { id: currentAccount.id, name: currentAccount.name, role: currentAccount.role, branch: currentAccount.branch, department: currentAccount.department ?? null }
+    : { id: '', name: '', role: 'Agent (end-user)' as any, branch: 'Main Branch' as any, department: null };
 
   // ── Tickets query ──────────────────────────────────────────
   const { data: apiTickets = [] } = useQuery({
@@ -176,8 +222,10 @@ export const TicketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     shift: Shift,
     floor: string,
     isFloorWide: boolean,
+    urgency: Urgency,
     _priorityOverride?: Priority,
     linkedIncident?: string,
+    relatedTicketNumber?: string,
   ) => {
     try {
       const created = await apiCreateTicket({
@@ -188,7 +236,9 @@ export const TicketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         agents_affected: agentsAffected,
         floor_team:     floor,
         is_floor_wide:  isFloorWide,
+        urgency,
         major_incident: linkedIncident ?? null,
+        ...(relatedTicketNumber ? { related_ticket_number: relatedTicketNumber } : {}),
       });
       await invalidate();
       const mappedTicket = mapApiTicket(created as ApiTicket);
@@ -213,8 +263,10 @@ export const TicketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
           }, 800);
         }
       }, 1000);
+      return true;
     } catch {
       toast.error('Failed to submit ticket. Please try again.');
+      return false;
     }
   };
 
@@ -238,10 +290,22 @@ export const TicketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     statusMutation.mutate({ id, status: 'resolved' });
   };
 
+  const markFloorWide = async (id: string, floorTeam?: string) => {
+    try {
+      await apiMarkFloorWide(id, floorTeam);
+      queryClient.invalidateQueries({ queryKey: ['tickets'] });
+      queryClient.invalidateQueries({ queryKey: ['ticket', id] });
+      toast.success('Ticket flagged as a floor-wide incident.');
+    } catch {
+      toast.error('Failed to flag ticket as floor-wide.');
+    }
+  };
+
   return (
     <TicketContext.Provider value={{
       tickets,
       currentUser,
+      markFloorWide,
       createTicket,
       updateTicketStatus,
       updateTicketPriority,

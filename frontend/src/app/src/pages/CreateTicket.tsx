@@ -1,11 +1,11 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router';
 import { useTickets } from '../context/TicketContext';
 import { useTheme } from '../context/ThemeContext';
-import { Category, Priority, Shift, BPO_CATEGORIES, PRIORITY_TRIGGERS, SLA_HOURS, getActiveShift } from '../types';
+import { Category, Priority, Shift, Urgency, BPO_CATEGORIES, PRIORITY_TRIGGERS, getActiveShift } from '../types';
 import {
   Tag, FileText, AlertCircle, Send, Users, Clock, MapPin,
-  AlertTriangle, Link2, RotateCcw, Info,
+  AlertTriangle, Link2,
   Phone, Monitor, HardDrive, Wifi, KeyRound,
 } from 'lucide-react';
 import { HSelect } from '../components/HSelect';
@@ -52,7 +52,8 @@ const calcAutoPriority = (agents: number): Priority => {
 
 // ─────────────────────────────────────────────────────────────
 export const CreateTicket = () => {
-  const { createTicket, currentUser } = useTickets();
+  const { createTicket, currentUser, tickets } = useTickets();
+  const isAgent = currentUser.role === 'Agent (end-user)';
   const { theme } = useTheme();
   const navigate = useNavigate();
   const isDark = theme === 'dark';
@@ -64,8 +65,12 @@ export const CreateTicket = () => {
   const [agentsAffected,  setAgentsAffected]  = useState(1);
   const [shift,           setShift]           = useState<Shift>(getActiveShift());
   const [floor,           setFloor]           = useState('');
-  const [isFloorWide,     setIsFloorWide]     = useState(false);
-  const [linkedIncident,  setLinkedIncident]  = useState('');
+  const [isFloorWide,          setIsFloorWide]          = useState(false);
+  const [relatedTicketNumber,  setRelatedTicketNumber]  = useState('');
+  // Remembers the user's agents count before floor-wide overrides it
+  const savedAgentsRef = useRef<number>(1);
+
+  const [urgency, setUrgency] = useState<Urgency>('minor_issue');
 
   // Priority: auto-calculated, but user may override
   const [priorityOverride, setPriorityOverride] = useState<Priority | null>(null);
@@ -79,23 +84,22 @@ export const CreateTicket = () => {
     }
   }, [agentsAffected]);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!title) return;
-    createTicket(
+    const ok = await createTicket(
       title, description, category, agentsAffected, shift,
-      floor, isFloorWide, priorityOverride ?? undefined,
-      isFloorWide && linkedIncident ? linkedIncident : undefined,
+      floor, isFloorWide, urgency, priorityOverride ?? undefined,
+      undefined,
+      relatedTicketNumber.trim() || undefined,
     );
-    navigate('/tickets');
+    if (ok) navigate('/tickets');
   };
 
   // ── Shared style helpers ──
   const inputCls = `w-full px-4 py-2.5 border rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-shadow ${isDark ? 'bg-slate-950 border-slate-700 text-white placeholder-slate-600' : 'bg-white border-gray-300 text-slate-900 placeholder-gray-400'}`;
   const labelCls  = `text-sm flex items-center gap-2 ${isDark ? 'text-slate-300' : 'text-gray-700'}`;
   const cardCls   = `rounded-xl shadow-sm border p-8 space-y-6 transition-colors duration-200 ${isDark ? 'bg-slate-900 border-slate-800' : 'bg-white border-gray-200'}`;
-
-  const pStyle = PRIORITY_STYLES[effectivePriority];
 
   return (
     <div className="max-w-3xl mx-auto space-y-6">
@@ -202,26 +206,35 @@ export const CreateTicket = () => {
             </label>
             <input
               type="number"
-              min={1}
+              min={isFloorWide ? 20 : 1}
               value={agentsAffected}
+              disabled={isFloorWide}
               onChange={e => setAgentsAffected(Math.max(1, parseInt(e.target.value) || 1))}
-              className={inputCls}
+              className={`${inputCls} ${isFloorWide ? 'opacity-50 cursor-not-allowed' : ''}`}
             />
-            {/* Auto-priority hint */}
-            <p className={`text-xs ${isDark ? 'text-slate-500' : 'text-gray-400'}`}>
-              Auto-priority:{' '}
-              <span className={`font-medium px-1.5 py-0.5 rounded text-xs border ${isDark ? pStyle.badge : pStyle.badgeLight}`}>
-                {autoPriority}
-              </span>
-              <span className={`ml-1.5 ${isDark ? 'text-slate-600' : 'text-gray-400'}`}>
-                — {PRIORITY_TRIGGERS[autoPriority].trigger}
-              </span>
-            </p>
-            {agentsAffected >= 20 && (
-              <p className="text-xs text-red-400 flex items-center gap-1 mt-0.5">
-                <AlertTriangle size={11} />
-                Critical threshold — immediate escalation may be required
+            {isFloorWide ? (
+              <p className={`text-xs flex items-center gap-1.5 ${isDark ? 'text-orange-400/80' : 'text-orange-600'}`}>
+                <AlertTriangle size={11} className="shrink-0" />
+                Locked at 20+ for floor-wide incidents — your original count is restored if you uncheck.
               </p>
+            ) : (
+              <>
+                <p className={`text-xs ${isDark ? 'text-slate-500' : 'text-gray-400'}`}>
+                  Auto-priority:{' '}
+                  <span className={`font-medium px-1.5 py-0.5 rounded text-xs border ${isDark ? PRIORITY_STYLES[autoPriority].badge : PRIORITY_STYLES[autoPriority].badgeLight}`}>
+                    {autoPriority}
+                  </span>
+                  <span className={`ml-1.5 ${isDark ? 'text-slate-600' : 'text-gray-400'}`}>
+                    — {PRIORITY_TRIGGERS[autoPriority].trigger}
+                  </span>
+                </p>
+                {agentsAffected >= 20 && (
+                  <p className="text-xs text-red-400 flex items-center gap-1 mt-0.5">
+                    <AlertTriangle size={11} />
+                    Critical threshold — immediate escalation may be required
+                  </p>
+                )}
+              </>
             )}
           </div>
 
@@ -247,81 +260,7 @@ export const CreateTicket = () => {
           </div>
         </div>
 
-        {/* ── SECTION 5: PRIORITY OVERRIDE ── */}
-        <div className="space-y-2">
-          <label className={`${labelCls} font-medium`}>
-            <AlertCircle size={15} className={isDark ? 'text-slate-500' : 'text-gray-400'} />
-            Priority
-            {!priorityOverride && (
-              <span className={`ml-1 text-xs px-1.5 py-0.5 rounded ${isDark ? 'bg-blue-500/10 text-blue-400' : 'bg-blue-100 text-blue-600'}`}>
-                Auto
-              </span>
-            )}
-          </label>
-          <HSelect
-            value={effectivePriority}
-            onChange={v => {
-              const val = v as Priority;
-              setPriorityOverride(val === calcAutoPriority(agentsAffected) ? null : val);
-            }}
-            options={(['Critical', 'High', 'Medium', 'Low'] as Priority[]).map(p => ({
-              value: p,
-              label: `${p} — ${PRIORITY_TRIGGERS[p].agentRange}`,
-            }))}
-            isDark={isDark}
-            triggerClassName={priorityOverride
-              ? `${isDark
-                  ? `bg-slate-950 border-slate-700 text-white hover:border-slate-500 ring-2 ${pStyle.ring}`
-                  : `bg-white border-gray-300 text-slate-800 hover:border-gray-400 ring-2 ${pStyle.ring}`
-                }`
-              : undefined
-            }
-          />
-          {/* BPO Priority matrix */}
-          <div className={`grid grid-cols-2 sm:grid-cols-4 gap-2 pt-1`}>
-            {(['Critical', 'High', 'Medium', 'Low'] as Priority[]).map(p => {
-              const ps = PRIORITY_STYLES[p];
-              const isActive = effectivePriority === p;
-              return (
-                <div
-                  key={p}
-                  className={`px-3 py-2 rounded-lg border text-xs transition-all ${
-                    isActive
-                      ? isDark ? `${ps.badge} border-opacity-60` : ps.badgeLight
-                      : isDark ? 'border-slate-800 text-slate-600' : 'border-gray-100 text-gray-400'
-                  }`}
-                >
-                  <p className="font-medium">{p}</p>
-                  <p className={`mt-0.5 leading-snug ${isActive ? '' : isDark ? 'text-slate-700' : 'text-gray-300'}`}>
-                    {PRIORITY_TRIGGERS[p].agentRange}
-                  </p>
-                </div>
-              );
-            })}
-          </div>
-
-          {priorityOverride && (
-            <p className={`text-xs flex items-center gap-1.5 ${isDark ? 'text-amber-400' : 'text-amber-600'}`}>
-              <Info size={11} />
-              Priority manually set to <strong>{priorityOverride}</strong>. Auto-calculated from agents: {autoPriority}.
-              <button
-                type="button"
-                onClick={() => setPriorityOverride(null)}
-                className="ml-1 underline flex items-center gap-0.5 hover:opacity-80"
-              >
-                <RotateCcw size={10} /> Reset to auto
-              </button>
-            </p>
-          )}
-
-          {/* SLA hint */}
-          <p className={`text-xs ${isDark ? 'text-slate-600' : 'text-gray-400'}`}>
-            SLA target for <strong className={isDark ? 'text-slate-400' : 'text-gray-600'}>{effectivePriority}</strong>:{' '}
-            <strong className={isDark ? 'text-slate-300' : 'text-gray-700'}>{SLA_HOURS[effectivePriority]} hour{SLA_HOURS[effectivePriority] !== 1 ? 's' : ''}</strong>
-          </p>
-        </div>
-
-        {/* ── SECTION 6: FLOOR / TEAM ── */}
+        {/* ── SECTION 8: FLOOR / TEAM ── */}
         <div className="space-y-2">
           <label className={labelCls}>
             <MapPin size={15} className={isDark ? 'text-slate-500' : 'text-gray-400'} />
@@ -336,14 +275,27 @@ export const CreateTicket = () => {
           />
         </div>
 
-        {/* ── SECTION 7: FLOOR-WIDE TOGGLE ── */}
+        {/* ── SECTION 9: FLOOR-WIDE TOGGLE + RELATED TICKET ── */}
         <div className={`rounded-xl border p-4 space-y-4 ${isDark ? 'bg-slate-950 border-slate-800' : 'bg-gray-50 border-gray-100'}`}>
           {/* Toggle row */}
           <div className="flex items-start gap-4">
             <div className="flex items-center pt-0.5 shrink-0">
               <button
                 type="button"
-                onClick={() => setIsFloorWide(v => !v)}
+                onClick={() => {
+                  setIsFloorWide(v => {
+                    if (!v) {
+                      // Turning ON: save current count, then lock to 20+
+                      savedAgentsRef.current = agentsAffected;
+                      setAgentsAffected(prev => Math.max(prev, 20));
+                    } else {
+                      // Turning OFF: restore what the user had before
+                      setAgentsAffected(savedAgentsRef.current);
+                      setRelatedTicketNumber('');
+                    }
+                    return !v;
+                  });
+                }}
                 className={`relative w-11 h-6 rounded-full transition-colors ${isFloorWide ? 'bg-orange-500' : isDark ? 'bg-slate-700' : 'bg-gray-300'}`}
               >
                 <span className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow-sm transition-transform ${isFloorWide ? 'translate-x-5' : ''}`} />
@@ -363,23 +315,30 @@ export const CreateTicket = () => {
             </div>
           </div>
 
-          {/* Linked incident field — only when floor-wide is on */}
+          {/* Related ticket dropdown — only when floor-wide is on */}
           {isFloorWide && (
             <div className={`pt-3 border-t space-y-2 ${isDark ? 'border-slate-800' : 'border-gray-200'}`}>
               <label className={`${labelCls} text-xs`}>
                 <Link2 size={13} className={isDark ? 'text-orange-400' : 'text-orange-500'} />
-                Link to Existing Incident{' '}
-                <span className={`ml-auto text-xs ${isDark ? 'text-slate-600' : 'text-gray-400'}`}>(optional)</span>
+                Link to an Existing Related Ticket
+                <span className={`ml-auto ${isDark ? 'text-slate-600' : 'text-gray-400'}`}>(optional)</span>
               </label>
-              <input
-                type="text"
-                placeholder="e.g. TKT-1001, INC-2024-0045, or a reference ID"
-                value={linkedIncident}
-                onChange={e => setLinkedIncident(e.target.value)}
-                className={`${inputCls} border-orange-500/30 focus:ring-orange-500`}
+              <HSelect
+                value={relatedTicketNumber}
+                onChange={v => setRelatedTicketNumber(v)}
+                options={[
+                  { value: '', label: '— None —' },
+                  ...tickets
+                    .filter(t => t.ticket_number)
+                    .map(t => ({
+                      value: t.ticket_number!,
+                      label: `${t.ticket_number} · ${t.title.length > 45 ? t.title.slice(0, 45) + '…' : t.title}`,
+                    })),
+                ]}
+                isDark={isDark}
               />
               <p className={`text-xs ${isDark ? 'text-slate-600' : 'text-gray-400'}`}>
-                Link this ticket to an existing incident or parent issue for tracking consolidation.
+                Links this ticket to an existing report of the same incident for consolidated tracking.
               </p>
             </div>
           )}
@@ -389,7 +348,7 @@ export const CreateTicket = () => {
         <div className={`pt-4 border-t flex items-center justify-between gap-4 ${isDark ? 'border-slate-800' : 'border-gray-100'}`}>
           {/* Summary pill */}
           <div className={`hidden sm:flex items-center gap-2 text-xs ${isDark ? 'text-slate-500' : 'text-gray-400'}`}>
-            <span className={`px-2 py-0.5 rounded-full border ${isDark ? pStyle.badge : pStyle.badgeLight}`}>{effectivePriority}</span>
+            <span className={`px-2 py-0.5 rounded-full border ${isDark ? PRIORITY_STYLES[autoPriority].badge : PRIORITY_STYLES[autoPriority].badgeLight}`}>{autoPriority}</span>
             <span>·</span>
             <span>{agentsAffected} agent{agentsAffected !== 1 ? 's' : ''}</span>
             <span>·</span>

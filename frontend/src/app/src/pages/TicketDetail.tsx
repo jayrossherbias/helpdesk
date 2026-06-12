@@ -1,8 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router';
+import { useQuery } from '@tanstack/react-query';
 import { useTickets } from '../context/TicketContext';
 import { useTheme } from '../context/ThemeContext';
-import { Status, Priority, SLA_HOURS, BRANCH_CONFIG } from '../types';
+import { Status, Priority, SLA_HOURS, BRANCH_CONFIG, URGENCY_META, Urgency } from '../types';
+import { getTicket as apiGetTicket } from '../../../api/tickets';
 import {
   ArrowLeft, Clock, User, Tag, FileText, Activity,
   AlertTriangle, Zap, Building2, Users, Timer, MapPin,
@@ -48,6 +50,22 @@ export const TicketDetail = () => {
 
   const ticket = tickets.find(t => t.id === id);
 
+  // Fetch the detail endpoint separately to get `logs` (not included in the list response)
+  const { data: detailApiTicket } = useQuery({
+    queryKey: ['ticket', id],
+    queryFn:  () => apiGetTicket(id!),
+    enabled:  !!id,
+  });
+
+  // Derive history: prefer server logs from detail fetch; fall back to list ticket's synthetic history
+  const history: import('../types').TicketHistory[] = React.useMemo(() => {
+    const logs = detailApiTicket?.logs;
+    if (logs && logs.length > 0) {
+      return logs.map(l => ({ id: l.id, action: l.action, timestamp: l.created_at, actor: l.actor }));
+    }
+    return ticket?.history ?? [];
+  }, [detailApiTicket, ticket]);
+
   const [now,              setNow]              = useState(Date.now());
   const [escalationNotes,  setEscalationNotes]  = useState('');
   const [showEscalateForm, setShowEscalateForm] = useState(false);
@@ -71,8 +89,7 @@ export const TicketDetail = () => {
   // ── Roles ────────────────────────────────────────────────────
   const canManage    = currentUser.role !== 'Agent (end-user)';
   const canReassign  = currentUser.role === 'Branch IT Supervisor' || currentUser.role === 'Main Branch IT Manager';
-  const isBranchIT   = currentUser.role === 'Branch IT Technician' ||
-                       (currentUser.role === 'Branch IT Supervisor' && currentUser.branch !== 'Main Branch');
+  const canEscalate  = currentUser.role === 'Branch IT Supervisor' && currentUser.branch !== 'Main Branch';
   const isMainOrAdmin = (currentUser.role === 'Branch IT Supervisor' && currentUser.branch === 'Main Branch') ||
                          currentUser.role === 'Main Branch IT Manager';
 
@@ -181,7 +198,7 @@ export const TicketDetail = () => {
                 <h1 className={`text-xl ${isDark ? 'text-white' : 'text-gray-900'}`}>{ticket.title}</h1>
                 <p className={`text-sm flex items-center gap-2 mt-1 ${isDark ? 'text-slate-400' : 'text-gray-500'}`}>
                   Ticket{' '}
-                  <span className={`font-medium ${isDark ? 'text-slate-300' : 'text-gray-700'}`}>#{ticket.id}</span>
+                  <span className={`font-medium ${isDark ? 'text-slate-300' : 'text-gray-700'}`}>{ticket.ticket_number ?? `#${ticket.id.slice(0, 8)}`}</span>
                   <span className={`mx-1 ${isDark ? 'text-slate-700' : 'text-gray-300'}`}>·</span>
                   Created {new Date(ticket.createdAt).toLocaleString()}
                 </p>
@@ -224,6 +241,92 @@ export const TicketDetail = () => {
               </div>
             )}
           </div>
+
+          {/* ══════════════════════════════════════════════════
+              RELATED TICKET + FOLLOW-UPS
+          ══════════════════════════════════════════════════ */}
+          {(ticket.relatedTo || (ticket.followUps && ticket.followUps.length > 0)) && (
+            <div className={cardBase}>
+              <h2 className={`text-sm mb-4 flex items-center gap-2 ${isDark ? 'text-slate-300' : 'text-gray-800'}`}>
+                <Link2 size={16} className={isDark ? 'text-slate-500' : 'text-gray-400'} />
+                Linked Tickets
+              </h2>
+              <div className="space-y-3">
+                {ticket.relatedTo && (
+                  <div>
+                    <p className={`text-xs uppercase tracking-wider mb-2 ${isDark ? 'text-slate-500' : 'text-gray-400'}`}>
+                      Related To
+                    </p>
+                    <button
+                      onClick={() => navigate(`/tickets/${ticket.relatedTo!.id}`)}
+                      className={`w-full text-left flex items-center justify-between gap-3 px-4 py-3 rounded-lg border transition-colors ${
+                        isDark
+                          ? 'bg-slate-950 border-slate-800 hover:border-slate-700'
+                          : 'bg-gray-50 border-gray-200 hover:border-gray-300'
+                      }`}
+                    >
+                      <div className="min-w-0">
+                        <p className={`text-xs font-medium ${isDark ? 'text-blue-400' : 'text-blue-600'}`}>
+                          {ticket.relatedTo.ticketNumber ?? `#${ticket.relatedTo.id.slice(0, 8)}`}
+                        </p>
+                        <p className={`text-sm truncate ${isDark ? 'text-slate-300' : 'text-gray-700'}`}>
+                          {ticket.relatedTo.title}
+                        </p>
+                      </div>
+                      <span className={`shrink-0 text-xs px-2 py-0.5 rounded-full border ${
+                        ticket.relatedTo.status === 'resolved'
+                          ? isDark ? 'bg-green-500/10 text-green-400 border-green-500/20' : 'bg-green-100 text-green-700 border-green-200'
+                          : ticket.relatedTo.status === 'in_progress'
+                          ? isDark ? 'bg-blue-500/10 text-blue-400 border-blue-500/20' : 'bg-blue-100 text-blue-700 border-blue-200'
+                          : isDark ? 'bg-amber-500/10 text-amber-400 border-amber-500/20' : 'bg-amber-100 text-amber-700 border-amber-200'
+                      }`}>
+                        {ticket.relatedTo.status}
+                      </span>
+                    </button>
+                  </div>
+                )}
+
+                {ticket.followUps && ticket.followUps.length > 0 && (
+                  <div>
+                    <p className={`text-xs uppercase tracking-wider mb-2 ${isDark ? 'text-slate-500' : 'text-gray-400'}`}>
+                      Follow-up Tickets ({ticket.followUps.length})
+                    </p>
+                    <div className="space-y-2">
+                      {ticket.followUps.map(fu => (
+                        <button
+                          key={fu.id}
+                          onClick={() => navigate(`/tickets/${fu.id}`)}
+                          className={`w-full text-left flex items-center justify-between gap-3 px-4 py-3 rounded-lg border transition-colors ${
+                            isDark
+                              ? 'bg-slate-950 border-slate-800 hover:border-slate-700'
+                              : 'bg-gray-50 border-gray-200 hover:border-gray-300'
+                          }`}
+                        >
+                          <div className="min-w-0">
+                            <p className={`text-xs font-medium ${isDark ? 'text-blue-400' : 'text-blue-600'}`}>
+                              {fu.ticketNumber ?? `#${fu.id.slice(0, 8)}`}
+                            </p>
+                            <p className={`text-sm truncate ${isDark ? 'text-slate-300' : 'text-gray-700'}`}>
+                              {fu.title}
+                            </p>
+                          </div>
+                          <span className={`shrink-0 text-xs px-2 py-0.5 rounded-full border ${
+                            fu.status === 'resolved'
+                              ? isDark ? 'bg-green-500/10 text-green-400 border-green-500/20' : 'bg-green-100 text-green-700 border-green-200'
+                              : fu.status === 'in_progress'
+                              ? isDark ? 'bg-blue-500/10 text-blue-400 border-blue-500/20' : 'bg-blue-100 text-blue-700 border-blue-200'
+                              : isDark ? 'bg-amber-500/10 text-amber-400 border-amber-500/20' : 'bg-amber-100 text-amber-700 border-amber-200'
+                          }`}>
+                            {fu.status}
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
 
           {/* ══════════════════════════════════════════════════
               ESCALATION SECTION
@@ -271,8 +374,8 @@ export const TicketDetail = () => {
               </div>
             )}
 
-            {/* ── Branch IT: Escalate button ── */}
-            {isBranchIT && ticket.status !== 'Resolved' && (
+            {/* ── Branch IT Supervisor: Escalate button ── */}
+            {canEscalate && ticket.status !== 'Resolved' && (
               <>
                 {ticket.escalationStatus === 'Not Escalated' ? (
                   <>
@@ -342,19 +445,23 @@ export const TicketDetail = () => {
             <h2 className={`text-base mb-5 flex items-center gap-2 ${isDark ? 'text-white' : 'text-gray-900'}`}>
               <Activity size={18} className={isDark ? 'text-slate-500' : 'text-gray-400'} /> Ticket History
             </h2>
-            <div className="space-y-5">
-              {ticket.history.map(hist => (
-                <div key={hist.id} className={`relative pl-6 pb-5 last:pb-0 border-l-2 last:border-transparent ${isDark ? 'border-slate-800' : 'border-gray-100'}`}>
-                  <div className={`absolute -left-2 top-0 w-4 h-4 rounded-full border-2 flex items-center justify-center ${isDark ? 'bg-blue-900/50 border-slate-900' : 'bg-blue-100 border-white'}`}>
-                    <div className="w-2 h-2 rounded-full bg-blue-500" />
+            {history.length === 0 ? (
+              <p className={`text-sm ${isDark ? 'text-slate-500' : 'text-gray-400'}`}>No history available.</p>
+            ) : (
+              <div className="space-y-5">
+                {history.map(hist => (
+                  <div key={hist.id} className={`relative pl-6 pb-5 last:pb-0 border-l-2 last:border-transparent ${isDark ? 'border-slate-800' : 'border-gray-100'}`}>
+                    <div className={`absolute -left-2 top-0 w-4 h-4 rounded-full border-2 flex items-center justify-center ${isDark ? 'bg-blue-900/50 border-slate-900' : 'bg-blue-100 border-white'}`}>
+                      <div className="w-2 h-2 rounded-full bg-blue-500" />
+                    </div>
+                    <p className={`text-sm ${isDark ? 'text-slate-200' : 'text-gray-900'}`}>{hist.action}</p>
+                    <p className={`text-xs mt-0.5 ${isDark ? 'text-slate-500' : 'text-gray-500'}`}>
+                      {new Date(hist.timestamp).toLocaleString()} · by {hist.actor}
+                    </p>
                   </div>
-                  <p className={`text-sm ${isDark ? 'text-slate-200' : 'text-gray-900'}`}>{hist.action}</p>
-                  <p className={`text-xs mt-0.5 ${isDark ? 'text-slate-500' : 'text-gray-500'}`}>
-                    {new Date(hist.timestamp).toLocaleString()} · by {hist.actor}
-                  </p>
-                </div>
-              ))}
-            </div>
+                ))}
+              </div>
+            )}
           </div>
         </div>
 
@@ -438,6 +545,31 @@ export const TicketDetail = () => {
               Incident Details
             </h3>
             <div className="space-y-3">
+
+              {/* Urgency */}
+              <div>
+                <p className={`text-xs uppercase tracking-wider mb-1 ${isDark ? 'text-slate-500' : 'text-gray-400'}`}>Work Impact</p>
+                {(() => {
+                  const urgencyKey = (ticket.urgency ?? 'minor_issue') as Urgency;
+                  const meta = URGENCY_META[urgencyKey];
+                  const urgencyBg: Record<Urgency, string> = {
+                    cannot_work:        isDark ? 'bg-red-500/15 text-red-400 border-red-500/30'       : 'bg-red-100 text-red-700 border-red-300',
+                    severely_impacted:  isDark ? 'bg-orange-500/15 text-orange-400 border-orange-500/30' : 'bg-orange-100 text-orange-700 border-orange-300',
+                    partially_impacted: isDark ? 'bg-yellow-500/15 text-yellow-400 border-yellow-500/30' : 'bg-yellow-100 text-yellow-700 border-yellow-300',
+                    minor_issue:        isDark ? 'bg-slate-800 text-slate-400 border-slate-700'        : 'bg-gray-100 text-gray-600 border-gray-300',
+                  };
+                  return (
+                    <div>
+                      <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 text-xs rounded-full border font-medium ${urgencyBg[urgencyKey]}`}>
+                        {meta.short}
+                      </span>
+                      <p className={`text-xs mt-1.5 leading-snug ${isDark ? 'text-slate-500' : 'text-gray-400'}`}>
+                        {meta.label.split('—')[1]?.trim()}
+                      </p>
+                    </div>
+                  );
+                })()}
+              </div>
 
               {/* Shift */}
               <div>

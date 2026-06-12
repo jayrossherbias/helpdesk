@@ -12,10 +12,39 @@ export interface BranchRef {
   is_main_branch?: boolean
 }
 
+export type Department =
+  | 'sales'
+  | 'customer_service'
+  | 'collections'
+  | 'technical_support'
+  | 'quality_assurance'
+  | 'back_office'
+
+export const DEPARTMENT_LABELS: Record<Department, string> = {
+  sales: 'Sales',
+  customer_service: 'Customer Service',
+  collections: 'Collections',
+  technical_support: 'Technical Support',
+  quality_assurance: 'Quality Assurance',
+  back_office: 'Back Office',
+}
+
 export interface UserRef {
   id: number
   username: string
   email?: string
+}
+
+export interface UserProfile extends UserRef {
+  first_name: string
+  last_name: string
+  role: string
+  shift: string | null
+  department: Department | null
+  branch: BranchRef | null
+  is_active: boolean
+  date_joined: string
+  open_ticket_count: number
 }
 
 export interface EscalationLog {
@@ -26,15 +55,32 @@ export interface EscalationLog {
   notes: string
 }
 
+export interface TicketLogEntry {
+  id: string
+  action: string
+  actor: string
+  created_at: string
+}
+
+export interface RelatedTicketRef {
+  id: string
+  ticket_number: string | null
+  title: string
+  category: string
+  status: string
+}
+
 export interface Ticket {
   id: string
+  ticket_number: string | null
   title: string
   description: string
   category: string
   priority: string
   status: string
+  urgency: string
   branch: BranchRef
-  created_by: UserRef
+  submitted_by: UserRef | null
   assigned_to: UserRef | null
   shift: string
   agents_affected: number
@@ -43,9 +89,12 @@ export interface Ticket {
   escalated: boolean
   escalation_logs: EscalationLog[]
   escalation_log?: EscalationLog | null
+  logs?: TicketLogEntry[]
   sla_status: string
   sla_deadline: string | null
   major_incident: string | null
+  related_to: RelatedTicketRef | null
+  follow_ups?: RelatedTicketRef[]
   created_at: string
   updated_at: string
 }

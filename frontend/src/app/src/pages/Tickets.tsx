@@ -5,7 +5,7 @@ import {
   Search, Eye, AlertTriangle, Building2, Filter, X,
   Users, Clock, ChevronDown, ChevronUp, ArrowRight, Link2,
 } from 'lucide-react';
-import { useNavigate } from 'react-router';
+import { useNavigate, useSearchParams } from 'react-router';
 import {
   Status, Priority, Category, Branch, Shift, EscalationStatus,
   BPO_CATEGORIES, BRANCHES, BRANCH_CONFIG, SLA_HOURS,
@@ -86,7 +86,8 @@ const statusBadgeLight: Record<Status, string> = {
 export const Tickets = () => {
   const { tickets, currentUser } = useTickets();
   const { theme } = useTheme();
-  const navigate  = useNavigate();
+  const navigate     = useNavigate();
+  const [searchParams] = useSearchParams();
   const isDark    = theme === 'dark';
 
   const isMainOrAdmin =
@@ -95,12 +96,12 @@ export const Tickets = () => {
 
   const [tab,              setTab]              = useState<'tickets' | 'floorwide'>('tickets');
   const [searchTerm,       setSearchTerm]       = useState('');
-  const [statusFilter,     setStatusFilter]     = useState<Status | 'All'>(ALL);
-  const [priorityFilter,   setPriorityFilter]   = useState<Priority | 'All'>(ALL);
+  const [statusFilter,     setStatusFilter]     = useState<Status | 'All'>((searchParams.get('status') as Status) || ALL);
+  const [priorityFilter,   setPriorityFilter]   = useState<Priority | 'All'>((searchParams.get('priority') as Priority) || ALL);
   const [categoryFilter,   setCategoryFilter]   = useState<Category | 'All'>(ALL);
   const [shiftFilter,      setShiftFilter]      = useState<Shift | 'All'>(ALL);
-  const [branchFilter,     setBranchFilter]     = useState<Branch | 'All'>(ALL);
-  const [escalationFilter, setEscalationFilter] = useState<EscalationStatus | 'All'>(ALL);
+  const [branchFilter,     setBranchFilter]     = useState<Branch | 'All'>((searchParams.get('branch') as Branch) || ALL);
+  const [escalationFilter, setEscalationFilter] = useState<EscalationStatus | 'All'>((searchParams.get('escalation') as EscalationStatus) || ALL);
   const [filtersOpen,      setFiltersOpen]      = useState(true);
 
   // Scope by role / branch
@@ -438,7 +439,7 @@ export const Tickets = () => {
                         >
                           {/* ID */}
                           <td className={`pl-4 pr-2 py-3 whitespace-nowrap text-sm font-medium ${isDark ? 'text-blue-400' : 'text-blue-600'}`}>
-                            #{ticket.id}
+                            {ticket.ticket_number ?? `#${ticket.id.slice(0, 8)}`}
                           </td>
 
                           {/* Title */}

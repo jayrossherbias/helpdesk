@@ -7,7 +7,8 @@ from rest_framework.viewsets import ModelViewSet
 from apps.accounts.models import UserProfile
 from apps.escalations.models import EscalationLog
 from apps.notifications.models import Notification
-from .models import Ticket
+from apps.notifications.service import NotificationService
+from .models import Ticket, TicketLog
 from .permissions import (
     CanCreateTicket,
     CanViewTickets,
@@ -28,9 +29,9 @@ class TicketViewSet(ModelViewSet):
         user = self.request.user
         qs = (
             Ticket.objects.select_related(
-                'branch', 'assigned_to', 'submitted_by', 'major_incident'
+                'branch', 'assigned_to', 'submitted_by', 'major_incident', 'related_to'
             )
-            .prefetch_related('escalation_logs')
+            .prefetch_related('escalation_logs', 'logs', 'follow_ups')
             .order_by('-created_at')
         )
 
@@ -104,6 +105,19 @@ class TicketViewSet(ModelViewSet):
             )
         ticket.status = new_status
         ticket.save(update_fields=['status', 'updated_at'])
+
+        status_label = ticket.get_status_display()
+        TicketLog.objects.create(
+            ticket=ticket,
+            action=f'Status changed to {status_label}.',
+            actor=request.user,
+        )
+
+        if new_status == Ticket.Status.RESOLVED:
+            NotificationService.notify_resolved(ticket)
+        else:
+            NotificationService.notify_status_update(ticket, new_status)
+
         return Response(TicketDetailSerializer(ticket, context={'request': request}).data)
 
     # PATCH /api/v1/tickets/{id}/assign/
@@ -127,7 +141,58 @@ class TicketViewSet(ModelViewSet):
         ticket.assigned_to = technician
         ticket.status = Ticket.Status.IN_PROGRESS
         ticket.save(update_fields=['assigned_to', 'status', 'updated_at'])
+
+        TicketLog.objects.create(
+            ticket=ticket,
+            action=f'Manually assigned to {technician.username} · status set to In Progress.',
+            actor=request.user,
+        )
+
+        NotificationService.notify_assignment(ticket)
+        NotificationService.notify_status_update(ticket, Ticket.Status.IN_PROGRESS)
+
         return Response(TicketDetailSerializer(ticket, context={'request': request}).data)
+
+    # PATCH /api/v1/tickets/{id}/flag-floor-wide/
+    @action(detail=True, methods=['patch'], url_path='flag-floor-wide')
+    def flag_floor_wide(self, request, pk=None):
+        ticket = self.get_object()
+
+        if ticket.status == Ticket.Status.RESOLVED:
+            raise drf_serializers.ValidationError(
+                {'detail': 'Cannot update a resolved ticket.'}
+            )
+        if ticket.is_floor_wide:
+            raise drf_serializers.ValidationError(
+                {'detail': 'Ticket is already marked as a floor-wide incident.'}
+            )
+
+        floor_team = request.data.get('floor_team', '').strip()
+
+        ticket.is_floor_wide = True
+        update_fields = ['is_floor_wide', 'updated_at']
+        if floor_team:
+            ticket.floor_team = floor_team
+            update_fields.append('floor_team')
+        ticket.save(update_fields=update_fields)
+
+        actor_name = request.user.username
+        detail_msg = f' · Floor/Team: {floor_team}' if floor_team else ''
+        TicketLog.objects.create(
+            ticket=ticket,
+            action=f'Flagged as floor-wide incident by {actor_name}.{detail_msg}',
+            actor=request.user,
+        )
+
+        NotificationService.notify_floor_wide(ticket, request.user)
+
+        ticket = Ticket.objects.select_related(
+            'branch', 'assigned_to', 'submitted_by', 'major_incident'
+        ).get(pk=ticket.pk)
+        return Response(
+            TicketDetailSerializer(ticket, context={'request': request}).data,
+            status=status.HTTP_200_OK,
+        )
 
     # POST /api/v1/tickets/{id}/escalate/
     @action(detail=True, methods=['post'], url_path='escalate')
@@ -157,6 +222,12 @@ class TicketViewSet(ModelViewSet):
                 )
                 for manager in managers
             ])
+            TicketLog.objects.create(
+                ticket=ticket,
+                action=f'Escalated to Main Branch · Reason: {reason}',
+                actor=request.user,
+            )
+            NotificationService.notify_submitter_escalation(ticket)
 
         return Response(
             TicketDetailSerializer(ticket, context={'request': request}).data,

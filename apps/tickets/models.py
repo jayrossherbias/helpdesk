@@ -3,6 +3,37 @@ from django.conf import settings
 from django.db import models
 
 
+CATEGORY_CODES = {
+    'voip_dialer': 'VOIP',
+    'crm_software': 'CRM',
+    'workstation': 'WS',
+    'network': 'NET',
+    'account_access': 'ACC',
+}
+
+BRANCH_CODES = {
+    'Main Branch':   'MAIN',
+    'Makati Branch': 'MKT',
+    'BGC Branch':    'BGC',
+    'Cebu Branch':   'CEB',
+    'Davao Branch':  'DAV',
+    'Manila Branch': 'MLA',
+}
+
+
+class TicketCounter(models.Model):
+    prefix = models.CharField(max_length=20, unique=True)
+    last_number = models.IntegerField(default=0)
+
+    @classmethod
+    def next_for(cls, prefix: str) -> int:
+        obj, _ = cls.objects.select_for_update().get_or_create(prefix=prefix)
+        obj.last_number += 1
+        obj.save(update_fields=['last_number'])
+        return obj.last_number
+
+
+
 class Ticket(models.Model):
     class Category(models.TextChoices):
         VOIP_DIALER = 'voip_dialer', 'VoIP & Dialer Issues'
@@ -27,6 +58,12 @@ class Ticket(models.Model):
         MORNING = 'morning', 'Morning (6AM–2PM)'
         AFTERNOON = 'afternoon', 'Afternoon (2PM–10PM)'
         NIGHT = 'night', 'Night (10PM–6AM)'
+
+    class Urgency(models.TextChoices):
+        CANNOT_WORK        = 'cannot_work',        'Cannot work — completely blocked'
+        SEVERELY_IMPACTED  = 'severely_impacted',  'Severely impacted — major disruption'
+        PARTIALLY_IMPACTED = 'partially_impacted', 'Partially impacted — can work with workarounds'
+        MINOR_ISSUE        = 'minor_issue',        'Minor issue — slight inconvenience'
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     title = models.CharField(max_length=200)
@@ -63,11 +100,55 @@ class Ticket(models.Model):
         blank=True,
         related_name='tickets',
     )
+    urgency = models.CharField(
+        max_length=20,
+        choices=Urgency.choices,
+        default=Urgency.MINOR_ISSUE,
+    )
+    ticket_number = models.CharField(max_length=20, unique=True, null=True, blank=True, db_index=True)
+    related_to = models.ForeignKey(
+        'self',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='follow_ups',
+    )
     sla_deadline = models.DateTimeField(null=True, blank=True)
     escalated = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
+    @classmethod
+    def generate_ticket_number(cls, category: str, submitter) -> str:
+        from apps.accounts.models import UserProfile
+        branch_name = getattr(submitter.branch, 'name', '') if submitter.branch else ''
+        branch_code = BRANCH_CODES.get(branch_name, 'GEN')
+        dept = getattr(submitter, 'department', '') or ''
+        dept_code = UserProfile.DEPARTMENT_CODES.get(dept, 'GEN')
+        prefix = f'{branch_code}-{dept_code}'
+        seq = TicketCounter.next_for(prefix)
+        return f'{prefix}-{seq:04d}'
+
     def __str__(self):
         priority = self.priority.upper() if self.priority else 'UNSET'
         return f'[{priority}] {self.title}'
+
+
+class TicketLog(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    ticket = models.ForeignKey(Ticket, on_delete=models.CASCADE, related_name='logs')
+    action = models.CharField(max_length=300)
+    actor = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='ticket_logs',
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['created_at']
+
+    def __str__(self):
+        return f'{self.ticket_id} — {self.action[:60]}'

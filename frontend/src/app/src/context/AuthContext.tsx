@@ -12,6 +12,7 @@ export interface Account {
   password: string;
   role: Role;
   branch: Branch;
+  department: string | null;
   active: boolean;
   createdAt: string;
 }
@@ -37,14 +38,15 @@ const API_ROLE_TO_FIGMA: Record<string, Role> = {
 
 function mapProfileToAccount(profile: UserProfile): Account {
   return {
-    id:        String(profile.id),
-    name:      profile.username,
-    email:     profile.email,
-    password:  '',
-    role:      API_ROLE_TO_FIGMA[profile.role] ?? 'Agent (end-user)',
-    branch:    (profile.branch?.name ?? 'Main Branch') as Branch,
-    active:    profile.is_active,
-    createdAt: profile.date_joined,
+    id:         String(profile.id),
+    name:       profile.username,
+    email:      profile.email,
+    password:   '',
+    role:       API_ROLE_TO_FIGMA[profile.role] ?? 'Agent (end-user)',
+    branch:     (profile.branch?.name ?? 'Main Branch') as Branch,
+    department: profile.department ?? null,
+    active:     profile.is_active,
+    createdAt:  profile.date_joined,
   };
 }
 

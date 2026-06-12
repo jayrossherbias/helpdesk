@@ -10,9 +10,12 @@ export interface Branch {
 export interface UserProfile {
   id: number
   username: string
+  first_name: string
+  last_name: string
   email: string
   role: 'agent' | 'branch_technician' | 'branch_supervisor' | 'main_it_manager'
   shift: 'morning' | 'afternoon' | 'night' | null
+  department: 'sales' | 'customer_service' | 'collections' | 'technical_support' | 'quality_assurance' | 'back_office' | null
   branch: Branch | null
   is_active: boolean
   date_joined: string

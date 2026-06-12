@@ -9,6 +9,7 @@ class Notification(models.Model):
         ESCALATION_TRIGGERED = 'escalation_triggered', 'Escalation Triggered'
         TICKET_ASSIGNED = 'ticket_assigned', 'Ticket Assigned'
         TICKET_RESOLVED = 'ticket_resolved', 'Ticket Resolved'
+        TICKET_UPDATED = 'ticket_updated', 'Ticket Updated'
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     recipient = models.ForeignKey(

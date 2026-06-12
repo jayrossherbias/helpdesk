@@ -29,6 +29,23 @@ class UserProfile(AbstractUser):
         AFTERNOON = 'afternoon', 'Afternoon (2PM–10PM)'
         NIGHT = 'night', 'Night (10PM–6AM)'
 
+    class Department(models.TextChoices):
+        SALES = 'sales', 'Sales'
+        CUSTOMER_SERVICE = 'customer_service', 'Customer Service'
+        COLLECTIONS = 'collections', 'Collections'
+        TECHNICAL_SUPPORT = 'technical_support', 'Technical Support'
+        QUALITY_ASSURANCE = 'quality_assurance', 'Quality Assurance'
+        BACK_OFFICE = 'back_office', 'Back Office'
+
+    DEPARTMENT_CODES = {
+        'sales': 'SLS',
+        'customer_service': 'CS',
+        'collections': 'COL',
+        'technical_support': 'TS',
+        'quality_assurance': 'QA',
+        'back_office': 'BO',
+    }
+
     branch = models.ForeignKey(
         Branch,
         on_delete=models.SET_NULL,
@@ -38,6 +55,12 @@ class UserProfile(AbstractUser):
     )
     role = models.CharField(max_length=30, choices=Role.choices, default=Role.AGENT)
     shift = models.CharField(max_length=20, choices=Shift.choices, null=True, blank=True)
+    department = models.CharField(
+        max_length=30,
+        choices=Department.choices,
+        null=True,
+        blank=True,
+    )
 
     def __str__(self):
         return self.username

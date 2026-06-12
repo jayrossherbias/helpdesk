@@ -7,6 +7,13 @@ export type Category =
   | 'Network & Connectivity'
   | 'Account & Access Management';
 export type Role = 'Agent (end-user)' | 'Branch IT Technician' | 'Branch IT Supervisor' | 'Main Branch IT Manager';
+export type Department =
+  | 'sales'
+  | 'customer_service'
+  | 'collections'
+  | 'technical_support'
+  | 'quality_assurance'
+  | 'back_office';
 export type Branch =
   | 'Main Branch'
   | 'Cebu Branch'
@@ -59,13 +66,54 @@ export interface TicketHistory {
   actor: string;
 }
 
+export type Urgency =
+  | 'cannot_work'
+  | 'severely_impacted'
+  | 'partially_impacted'
+  | 'minor_issue';
+
+export const URGENCY_META: Record<Urgency, { label: string; short: string; color: string; lightColor: string }> = {
+  cannot_work:        { label: 'Cannot work — completely blocked',            short: 'Cannot Work',        color: 'text-red-400',    lightColor: 'text-red-700'    },
+  severely_impacted:  { label: 'Severely impacted — major disruption',        short: 'Severely Impacted',  color: 'text-orange-400', lightColor: 'text-orange-700' },
+  partially_impacted: { label: 'Partially impacted — working with difficulty', short: 'Partially Impacted', color: 'text-yellow-400', lightColor: 'text-yellow-700' },
+  minor_issue:        { label: 'Minor issue — slight inconvenience',           short: 'Minor Issue',        color: 'text-slate-400',  lightColor: 'text-gray-600'   },
+};
+
+export const DEPARTMENT_LABELS: Record<Department, string> = {
+  sales: 'Sales',
+  customer_service: 'Customer Service',
+  collections: 'Collections',
+  technical_support: 'Technical Support',
+  quality_assurance: 'Quality Assurance',
+  back_office: 'Back Office',
+};
+
+export const DEPARTMENT_CODES: Record<Department, string> = {
+  sales: 'SLS',
+  customer_service: 'CS',
+  collections: 'COL',
+  technical_support: 'TS',
+  quality_assurance: 'QA',
+  back_office: 'BO',
+};
+
+export interface RelatedTicketRef {
+  id: string;
+  ticketNumber: string | null;
+  title: string;
+  category: string;
+  status: string;
+}
+
 export interface Ticket {
   id: string;
+  ticket_number: string | null;
   title: string;
   description: string;
   category: Category;
   priority: Priority;
   status: Status;
+  urgency: Urgency;
   assignee: string;
   creator: string;
   branch: Branch;
@@ -74,6 +122,8 @@ export interface Ticket {
   floor: string;
   isFloorWide: boolean;
   linkedIncident?: string;
+  relatedTo: RelatedTicketRef | null;
+  followUps: RelatedTicketRef[];
   escalationStatus: EscalationStatus;
   escalatedAt?: string;
   escalationNotes?: string;
@@ -87,6 +137,7 @@ export interface User {
   name: string;
   role: Role;
   branch: Branch;
+  department: Department | null;
 }
 
 // ── Notification system ───────────────────────────────────────

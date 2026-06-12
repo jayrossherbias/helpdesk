@@ -30,8 +30,8 @@ class UserProfileSerializer(serializers.ModelSerializer):
     class Meta:
         model = UserProfile
         fields = (
-            'id', 'username', 'email', 'role', 'shift',
-            'branch', 'is_active', 'date_joined', 'open_ticket_count',
+            'id', 'username', 'first_name', 'last_name', 'email', 'role', 'shift',
+            'department', 'branch', 'is_active', 'date_joined', 'open_ticket_count',
         )
 
     def get_open_ticket_count(self, obj):
@@ -48,7 +48,7 @@ class UserCreateSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = UserProfile
-        fields = ('id', 'username', 'email', 'password', 'role', 'shift', 'branch', 'is_active')
+        fields = ('id', 'username', 'email', 'password', 'role', 'shift', 'department', 'branch', 'is_active')
         read_only_fields = ('id',)
 
     def create(self, validated_data):

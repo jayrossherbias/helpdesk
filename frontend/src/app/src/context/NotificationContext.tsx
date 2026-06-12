@@ -12,6 +12,7 @@ import {
 const API_TYPE_TO_FIGMA: Record<string, NotificationType> = {
   ticket_assigned:      'ticket_assigned',
   ticket_resolved:      'ticket_resolved',
+  ticket_updated:       'ticket_assigned',
   sla_warning:          'sla_warning',
   sla_breach:           'sla_warning',
   escalation_triggered: 'escalation',
