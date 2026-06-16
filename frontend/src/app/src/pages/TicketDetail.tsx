@@ -1,16 +1,18 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useTickets } from '../context/TicketContext';
 import { useTheme } from '../context/ThemeContext';
-import { Status, Priority, SLA_HOURS, BRANCH_CONFIG, URGENCY_META, Urgency } from '../types';
-import { getTicket as apiGetTicket } from '../../../api/tickets';
+import { Status, Priority, SLA_HOURS, BRANCH_CONFIG, EscalationStatus } from '../types';
+import { getTicket as apiGetTicket, assignTicket as apiAssignTicket } from '../../../api/tickets';
+import { getUsers } from '../../../api/accounts';
 import {
   ArrowLeft, Clock, User, Tag, FileText, Activity,
   AlertTriangle, Zap, Building2, Users, Timer, MapPin,
-  CheckCircle2, Link2, ShieldAlert,
+  CheckCircle2, Link2, ShieldAlert, ClipboardList, Save,
 } from 'lucide-react';
 import { HSelect } from '../components/HSelect';
+import { ConfirmModal } from '../components/ConfirmModal';
 
 // ── SLA helpers ───────────────────────────────────────────────
 const SLA_MS: Record<Priority, number> = {
@@ -44,7 +46,7 @@ const SHIFT_BADGE_LIGHT: Record<string, string> = {
 export const TicketDetail = () => {
   const { id }       = useParams();
   const navigate     = useNavigate();
-  const { tickets, currentUser, updateTicketStatus, updateTicketPriority, assignTicket, escalateTicket, resolveEscalation } = useTickets();
+  const { tickets, currentUser, updateTicketStatus, updateTicketPriority, updateResolutionNotes, assignTicket, escalateTicket, resolveEscalation } = useTickets();
   const { theme }    = useTheme();
   const isDark       = theme === 'dark';
 
@@ -57,6 +59,25 @@ export const TicketDetail = () => {
     enabled:  !!id,
   });
 
+  const queryClient = useQueryClient();
+
+  // Fetch branch technicians for the Assign To dropdown (always fetch; the dropdown only renders for supervisors)
+  const { data: technicians = [] } = useQuery({
+    queryKey: ['technicians'],
+    queryFn:  () => getUsers(['branch_technician']),
+  });
+
+  const assignMutation = useMutation({
+    mutationFn: (userId: number) => apiAssignTicket(id!, userId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['tickets'] });
+      queryClient.invalidateQueries({ queryKey: ['ticket', id] });
+    },
+  });
+
+  // Description comes from the detail endpoint (not included in the list response)
+  const description = detailApiTicket?.description ?? ticket?.description ?? '';
+
   // Derive history: prefer server logs from detail fetch; fall back to list ticket's synthetic history
   const history: import('../types').TicketHistory[] = React.useMemo(() => {
     const logs = detailApiTicket?.logs;
@@ -66,9 +87,29 @@ export const TicketDetail = () => {
     return ticket?.history ?? [];
   }, [detailApiTicket, ticket]);
 
-  const [now,              setNow]              = useState(Date.now());
-  const [escalationNotes,  setEscalationNotes]  = useState('');
-  const [showEscalateForm, setShowEscalateForm] = useState(false);
+  // The list endpoint omits escalation_log, so ticket.escalationStatus can never
+  // reflect resolution. Override it from the detail fetch which includes resolved_at.
+  const escalationStatus = React.useMemo<EscalationStatus>(() => {
+    if (detailApiTicket) {
+      if (!detailApiTicket.escalated) return 'Not Escalated';
+      return detailApiTicket.escalation_log?.resolved_at ? 'Resolved by Main Branch' : 'Escalated';
+    }
+    return ticket?.escalationStatus ?? 'Not Escalated';
+  }, [detailApiTicket, ticket?.escalationStatus]);
+
+  const [now,               setNow]               = useState(Date.now());
+  const [escalationNotes,   setEscalationNotes]   = useState('');
+  const [showEscalateModal, setShowEscalateModal] = useState(false);
+  const [pendingStatus,     setPendingStatus]     = useState<Status | null>(null);
+  const [showStatusConfirm, setShowStatusConfirm] = useState(false);
+  const [pendingPriority,     setPendingPriority]     = useState<Priority | null>(null);
+  const [showPriorityConfirm, setShowPriorityConfirm] = useState(false);
+  const [pendingAssignee,     setPendingAssignee]     = useState<{ id: number; label: string } | null>(null);
+  const [showAssignConfirm,   setShowAssignConfirm]   = useState(false);
+  const [resolutionDraft,          setResolutionDraft]          = useState<string | null>(null);
+  const [savingResolution,         setSavingResolution]         = useState(false);
+  const [showResolveEscModal,      setShowResolveEscModal]      = useState(false);
+  const [resolveEscNotes,          setResolveEscNotes]          = useState('');
 
   useEffect(() => {
     const interval = setInterval(() => setNow(Date.now()), 30000);
@@ -87,13 +128,13 @@ export const TicketDetail = () => {
   }
 
   // ── Roles ────────────────────────────────────────────────────
-  const canManage    = currentUser.role !== 'Agent (end-user)';
-  const canReassign  = currentUser.role === 'Branch IT Supervisor' || currentUser.role === 'Main Branch IT Manager';
+  // main_it_manager is read-only — no workflow actions
+  const canManage    = currentUser.role !== 'Agent (end-user)' && currentUser.role !== 'Main Branch IT Manager';
+  const canReassign  = currentUser.role === 'Branch IT Supervisor' || currentUser.role === 'Main Branch IT Supervisor';
   const canEscalate  = currentUser.role === 'Branch IT Supervisor' && currentUser.branch !== 'Main Branch';
-  const isMainOrAdmin = (currentUser.role === 'Branch IT Supervisor' && currentUser.branch === 'Main Branch') ||
-                         currentUser.role === 'Main Branch IT Manager';
+  const isMainOrAdmin = currentUser.role === 'Main Branch IT Supervisor';
 
-  const branchCfg = BRANCH_CONFIG[ticket.branch];
+  const branchCfg = BRANCH_CONFIG[ticket.branch] ?? { dotClass: 'bg-slate-500', color: '#64748b', label: ticket.branch };
 
   // ── SLA ──────────────────────────────────────────────────────
   const slaMs        = SLA_MS[ticket.priority];
@@ -139,13 +180,13 @@ export const TicketDetail = () => {
   const handleEscalate = () => {
     if (!escalationNotes.trim()) return;
     escalateTicket(ticket.id, escalationNotes);
-    setShowEscalateForm(false);
+    setShowEscalateModal(false);
     setEscalationNotes('');
   };
 
   // ── Escalation badge colour ───────────────────────────────────
   const escalationBadge = () => {
-    switch (ticket.escalationStatus) {
+    switch (escalationStatus) {
       case 'Escalated':
         return 'bg-orange-500/15 text-orange-400 border-orange-500/20';
       case 'Resolved by Main Branch':
@@ -207,7 +248,7 @@ export const TicketDetail = () => {
 
             {/* Description */}
             <div className={`prose prose-sm max-w-none mb-6 whitespace-pre-wrap text-sm ${isDark ? 'text-slate-300' : 'text-gray-700'}`}>
-              {ticket.description}
+              {description || <span className={isDark ? 'text-slate-600 italic' : 'text-gray-400 italic'}>No description provided.</span>}
             </div>
 
             {/* Meta grid */}
@@ -332,9 +373,9 @@ export const TicketDetail = () => {
               ESCALATION SECTION
           ══════════════════════════════════════════════════ */}
           <div className={`rounded-xl border p-5 transition-colors duration-200 ${
-            ticket.escalationStatus === 'Escalated'
+            escalationStatus === 'Escalated'
               ? isDark ? 'bg-orange-500/5 border-orange-500/20' : 'bg-orange-50 border-orange-200'
-              : ticket.escalationStatus === 'Resolved by Main Branch'
+              : escalationStatus === 'Resolved by Main Branch'
               ? isDark ? 'bg-green-500/5 border-green-500/20' : 'bg-green-50 border-green-200'
               : isDark ? 'bg-slate-900 border-slate-800' : 'bg-white border-gray-200'
           }`}>
@@ -348,9 +389,9 @@ export const TicketDetail = () => {
             {/* Status badge row */}
             <div className="flex items-center gap-3 mb-4 flex-wrap">
               <span className={`inline-flex items-center gap-1 text-xs px-2.5 py-1 rounded-full border font-medium ${escalationBadge()}`}>
-                {ticket.escalationStatus === 'Escalated' ? (
+                {escalationStatus === 'Escalated' ? (
                   <><Zap size={11} className="shrink-0" /> Escalated to Main Branch</>
-                ) : ticket.escalationStatus === 'Resolved by Main Branch' ? (
+                ) : escalationStatus === 'Resolved by Main Branch' ? (
                   <><CheckCircle2 size={11} className="shrink-0" /> Resolved by Main Branch</>
                 ) : (
                   <>— Not Escalated</>
@@ -376,67 +417,102 @@ export const TicketDetail = () => {
 
             {/* ── Branch IT Supervisor: Escalate button ── */}
             {canEscalate && ticket.status !== 'Resolved' && (
-              <>
-                {ticket.escalationStatus === 'Not Escalated' ? (
-                  <>
-                    {!showEscalateForm ? (
-                      <button
-                        onClick={() => setShowEscalateForm(true)}
-                        className="flex items-center gap-2 px-4 py-2 text-sm rounded-lg bg-orange-600 hover:bg-orange-700 text-white transition-colors"
-                      >
-                        <Zap size={14} /> Escalate to Main Branch
-                      </button>
-                    ) : (
-                      <div className="space-y-3">
-                        <p className={`text-xs ${isDark ? 'text-slate-400' : 'text-gray-600'}`}>
-                          Describe why Main Branch intervention is required:
-                        </p>
-                        <textarea
-                          rows={3}
-                          value={escalationNotes}
-                          onChange={e => setEscalationNotes(e.target.value)}
-                          placeholder="e.g. Issue is beyond branch-level resolution. 28 agents down, VoIP vendor contacted. Need Main Branch support."
-                          className={`w-full px-4 py-2.5 border rounded-lg text-sm resize-none outline-none focus:ring-2 focus:ring-orange-500 ${isDark ? 'bg-slate-950 border-slate-700 text-white placeholder-slate-500' : 'bg-white border-gray-300 text-slate-900'}`}
-                        />
-                        <div className="flex gap-2">
-                          <button
-                            onClick={handleEscalate}
-                            disabled={!escalationNotes.trim()}
-                            className="flex items-center gap-2 px-4 py-2 text-sm rounded-lg bg-orange-600 hover:bg-orange-700 disabled:opacity-50 disabled:cursor-not-allowed text-white transition-colors"
-                          >
-                            <Zap size={14} /> Confirm Escalation
-                          </button>
-                          <button
-                            onClick={() => { setShowEscalateForm(false); setEscalationNotes(''); }}
-                            className={`px-4 py-2 text-sm rounded-lg transition-colors ${isDark ? 'text-slate-400 hover:bg-slate-800' : 'text-gray-500 hover:bg-gray-100'}`}
-                          >
-                            Cancel
-                          </button>
-                        </div>
-                      </div>
-                    )}
-                  </>
-                ) : (
-                  /* Already escalated — show disabled state */
-                  <button
-                    disabled
-                    className="flex items-center gap-2 px-4 py-2 text-sm rounded-lg bg-orange-600/40 text-orange-300 cursor-not-allowed"
-                  >
-                    <Zap size={14} />
-                    {ticket.escalationStatus === 'Escalated' ? 'Already Escalated' : 'Escalation Resolved'}
-                  </button>
-                )}
-              </>
+              escalationStatus === 'Not Escalated' ? (
+                <button
+                  onClick={() => { setEscalationNotes(''); setShowEscalateModal(true); }}
+                  className="flex items-center gap-2 px-4 py-2 text-sm rounded-lg bg-orange-600 hover:bg-orange-700 text-white transition-colors"
+                >
+                  <Zap size={14} /> Escalate to Main Branch
+                </button>
+              ) : (
+                <button
+                  disabled
+                  className="flex items-center gap-2 px-4 py-2 text-sm rounded-lg bg-orange-600/40 text-orange-300 cursor-not-allowed"
+                >
+                  <Zap size={14} />
+                  {escalationStatus === 'Escalated' ? 'Already Escalated' : 'Escalation Resolved'}
+                </button>
+              )
             )}
 
             {/* ── Main Branch: Resolve escalation ── */}
-            {isMainOrAdmin && ticket.escalationStatus === 'Escalated' && (
-              <button
-                onClick={() => resolveEscalation(ticket.id)}
-                className="flex items-center gap-2 px-4 py-2 text-sm rounded-lg bg-green-600 hover:bg-green-700 text-white transition-colors"
-              >
-                <CheckCircle2 size={14} /> Mark Escalation Resolved
-              </button>
+            {isMainOrAdmin && detailApiTicket?.escalated && (
+              escalationStatus === 'Escalated' ? (
+                <button
+                  onClick={() => { setResolveEscNotes(''); setShowResolveEscModal(true); }}
+                  className="flex items-center gap-2 px-4 py-2 text-sm rounded-lg bg-green-600 hover:bg-green-700 text-white transition-colors"
+                >
+                  <CheckCircle2 size={14} /> Mark Escalation Resolved
+                </button>
+              ) : (
+                <button
+                  disabled
+                  className="flex items-center gap-2 px-4 py-2 text-sm rounded-lg bg-green-600/40 text-green-300 cursor-not-allowed"
+                >
+                  <CheckCircle2 size={14} /> Escalation Resolved
+                </button>
+              )
+            )}
+          </div>
+
+          {/* ── Resolution Notes ── */}
+          <div className={cardBase}>
+            <h2 className={`text-base mb-4 flex items-center gap-2 ${isDark ? 'text-white' : 'text-gray-900'}`}>
+              <ClipboardList size={18} className={isDark ? 'text-slate-500' : 'text-gray-400'} />
+              Action Taken / Resolution Notes
+            </h2>
+
+            {canManage ? (
+              <div className="space-y-3">
+                <textarea
+                  rows={4}
+                  value={resolutionDraft ?? ticket.resolutionNotes}
+                  onChange={e => setResolutionDraft(e.target.value)}
+                  placeholder="Describe what was diagnosed and what action was taken to resolve this ticket…"
+                  className={`w-full px-4 py-3 border rounded-lg text-sm resize-y outline-none focus:ring-2 focus:ring-blue-500 transition-colors ${
+                    isDark
+                      ? 'bg-slate-950 border-slate-700 text-white placeholder-slate-600'
+                      : 'bg-gray-50 border-gray-200 text-gray-900 placeholder-gray-400'
+                  }`}
+                />
+                <div className="flex items-center justify-between">
+                  {resolutionDraft !== null && resolutionDraft !== ticket.resolutionNotes ? (
+                    <button
+                      disabled={savingResolution}
+                      onClick={async () => {
+                        setSavingResolution(true);
+                        await updateResolutionNotes(ticket.id, resolutionDraft);
+                        setResolutionDraft(null);
+                        setSavingResolution(false);
+                      }}
+                      className="flex items-center gap-2 px-4 py-2 text-sm rounded-lg bg-blue-600 hover:bg-blue-700 text-white transition-colors disabled:opacity-60"
+                    >
+                      <Save size={14} />
+                      {savingResolution ? 'Saving…' : 'Save Notes'}
+                    </button>
+                  ) : (
+                    <span className={`text-xs ${isDark ? 'text-slate-600' : 'text-gray-400'}`}>
+                      {ticket.resolutionNotes ? 'Notes saved.' : 'No notes yet.'}
+                    </span>
+                  )}
+                  {resolutionDraft !== null && resolutionDraft !== ticket.resolutionNotes && (
+                    <button
+                      onClick={() => setResolutionDraft(null)}
+                      className={`text-xs ${isDark ? 'text-slate-500 hover:text-slate-300' : 'text-gray-400 hover:text-gray-600'}`}
+                    >
+                      Discard
+                    </button>
+                  )}
+                </div>
+              </div>
+            ) : ticket.resolutionNotes ? (
+              <p className={`text-sm whitespace-pre-wrap ${isDark ? 'text-slate-300' : 'text-gray-700'}`}>
+                {ticket.resolutionNotes}
+              </p>
+            ) : (
+              <p className={`text-sm italic ${isDark ? 'text-slate-600' : 'text-gray-400'}`}>
+                No resolution notes added yet.
+              </p>
             )}
           </div>
 
@@ -448,16 +524,25 @@ export const TicketDetail = () => {
             {history.length === 0 ? (
               <p className={`text-sm ${isDark ? 'text-slate-500' : 'text-gray-400'}`}>No history available.</p>
             ) : (
-              <div className="space-y-5">
-                {history.map(hist => (
-                  <div key={hist.id} className={`relative pl-6 pb-5 last:pb-0 border-l-2 last:border-transparent ${isDark ? 'border-slate-800' : 'border-gray-100'}`}>
-                    <div className={`absolute -left-2 top-0 w-4 h-4 rounded-full border-2 flex items-center justify-center ${isDark ? 'bg-blue-900/50 border-slate-900' : 'bg-blue-100 border-white'}`}>
-                      <div className="w-2 h-2 rounded-full bg-blue-500" />
+              <div>
+                {history.map((hist, i) => (
+                  <div key={hist.id} className="flex gap-4">
+                    {/* Dot + connector column — items-center keeps line perfectly under dot */}
+                    <div className="flex flex-col items-center">
+                      <div className={`mt-0.5 w-4 h-4 shrink-0 rounded-full border-2 flex items-center justify-center ${isDark ? 'bg-blue-900/50 border-slate-900' : 'bg-blue-100 border-white'}`}>
+                        <div className="w-2 h-2 rounded-full bg-blue-500" />
+                      </div>
+                      {i < history.length - 1 && (
+                        <div className={`w-0.5 flex-1 mt-1 ${isDark ? 'bg-slate-800' : 'bg-gray-100'}`} />
+                      )}
                     </div>
-                    <p className={`text-sm ${isDark ? 'text-slate-200' : 'text-gray-900'}`}>{hist.action}</p>
-                    <p className={`text-xs mt-0.5 ${isDark ? 'text-slate-500' : 'text-gray-500'}`}>
-                      {new Date(hist.timestamp).toLocaleString()} · by {hist.actor}
-                    </p>
+                    {/* Content */}
+                    <div className={`flex-1 min-w-0 ${i < history.length - 1 ? 'pb-5' : ''}`}>
+                      <p className={`text-sm ${isDark ? 'text-slate-200' : 'text-gray-900'}`}>{hist.action}</p>
+                      <p className={`text-xs mt-0.5 ${isDark ? 'text-slate-500' : 'text-gray-500'}`}>
+                        {new Date(hist.timestamp).toLocaleString()} · by {hist.actor}
+                      </p>
+                    </div>
                   </div>
                 ))}
               </div>
@@ -481,10 +566,17 @@ export const TicketDetail = () => {
             </h3>
 
             {ticket.status === 'Resolved' ? (
-              <div className="flex items-center gap-2">
-                <CheckCircle2 size={16} className="text-green-400" />
-                <p className={`text-sm ${isDark ? 'text-green-400' : 'text-green-600'}`}>Resolved within SLA</p>
-              </div>
+              ticket.slaStatus === 'resolved_breached' ? (
+                <div className="flex items-center gap-2">
+                  <AlertTriangle size={16} className="text-red-400" />
+                  <p className={`text-sm ${isDark ? 'text-red-400' : 'text-red-600'}`}>Resolved after SLA breach</p>
+                </div>
+              ) : (
+                <div className="flex items-center gap-2">
+                  <CheckCircle2 size={16} className="text-green-400" />
+                  <p className={`text-sm ${isDark ? 'text-green-400' : 'text-green-600'}`}>Resolved within SLA</p>
+                </div>
+              )
             ) : (
               <>
                 {/* Time remaining */}
@@ -545,31 +637,6 @@ export const TicketDetail = () => {
               Incident Details
             </h3>
             <div className="space-y-3">
-
-              {/* Urgency */}
-              <div>
-                <p className={`text-xs uppercase tracking-wider mb-1 ${isDark ? 'text-slate-500' : 'text-gray-400'}`}>Work Impact</p>
-                {(() => {
-                  const urgencyKey = (ticket.urgency ?? 'minor_issue') as Urgency;
-                  const meta = URGENCY_META[urgencyKey];
-                  const urgencyBg: Record<Urgency, string> = {
-                    cannot_work:        isDark ? 'bg-red-500/15 text-red-400 border-red-500/30'       : 'bg-red-100 text-red-700 border-red-300',
-                    severely_impacted:  isDark ? 'bg-orange-500/15 text-orange-400 border-orange-500/30' : 'bg-orange-100 text-orange-700 border-orange-300',
-                    partially_impacted: isDark ? 'bg-yellow-500/15 text-yellow-400 border-yellow-500/30' : 'bg-yellow-100 text-yellow-700 border-yellow-300',
-                    minor_issue:        isDark ? 'bg-slate-800 text-slate-400 border-slate-700'        : 'bg-gray-100 text-gray-600 border-gray-300',
-                  };
-                  return (
-                    <div>
-                      <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 text-xs rounded-full border font-medium ${urgencyBg[urgencyKey]}`}>
-                        {meta.short}
-                      </span>
-                      <p className={`text-xs mt-1.5 leading-snug ${isDark ? 'text-slate-500' : 'text-gray-400'}`}>
-                        {meta.label.split('—')[1]?.trim()}
-                      </p>
-                    </div>
-                  );
-                })()}
-              </div>
 
               {/* Shift */}
               <div>
@@ -641,7 +708,7 @@ export const TicketDetail = () => {
                 {canManage ? (
                   <HSelect
                     value={ticket.status}
-                    onChange={v => updateTicketStatus(ticket.id, v as Status)}
+                    onChange={v => { setPendingStatus(v as Status); setShowStatusConfirm(true); }}
                     options={[
                       { value: 'Open',        label: 'Open' },
                       { value: 'In Progress', label: 'In Progress' },
@@ -662,7 +729,7 @@ export const TicketDetail = () => {
                 {canManage ? (
                   <HSelect
                     value={ticket.priority}
-                    onChange={v => updateTicketPriority(ticket.id, v as Priority)}
+                    onChange={v => { setPendingPriority(v as Priority); setShowPriorityConfirm(true); }}
                     options={[
                       { value: 'Critical', label: 'Critical' },
                       { value: 'High',     label: 'High' },
@@ -684,18 +751,26 @@ export const TicketDetail = () => {
                   <label className={`text-xs uppercase tracking-wider block mb-2 ${isDark ? 'text-slate-500' : 'text-gray-400'}`}>Assign To</label>
                   <HSelect
                     value={ticket.assignee}
-                    onChange={v => assignTicket(ticket.id, v)}
+                    onChange={v => {
+                      const tech = technicians.find(t => t.username === v);
+                      if (tech) {
+                        setPendingAssignee({ id: tech.id, label: `${tech.first_name} ${tech.last_name}`.trim() || tech.username });
+                        setShowAssignConfirm(true);
+                      }
+                    }}
                     options={[
-                      { value: 'Unassigned',        label: 'Unassigned' },
-                      { value: 'VoIP Team',          label: 'VoIP Team' },
-                      { value: 'CRM Team',           label: 'CRM Team' },
-                      { value: 'Workstation Team',   label: 'Workstation Team' },
-                      { value: 'Network Team',       label: 'Network Team' },
-                      { value: 'Account Team',       label: 'Account Team' },
+                      { value: 'Unassigned', label: 'Unassigned' },
+                      ...technicians.map(t => ({
+                        value: t.username,
+                        label: `${t.first_name} ${t.last_name}`.trim() || t.username,
+                      })),
                     ]}
                     isDark={isDark}
                     className="w-full"
                   />
+                  {assignMutation.isPending && (
+                    <p className={`text-xs mt-1 ${isDark ? 'text-slate-500' : 'text-gray-400'}`}>Reassigning…</p>
+                  )}
                 </div>
               )}
             </div>
@@ -704,6 +779,95 @@ export const TicketDetail = () => {
         </div>
         {/* end right panel */}
       </div>
+
+      {/* ── Confirmation modals ── */}
+      <ConfirmModal
+        open={showStatusConfirm}
+        title="Change ticket status?"
+        isDark={isDark}
+        confirmLabel="Yes, Change"
+        onConfirm={() => { if (pendingStatus) updateTicketStatus(ticket.id, pendingStatus); setShowStatusConfirm(false); setPendingStatus(null); }}
+        onCancel={() => { setShowStatusConfirm(false); setPendingStatus(null); }}
+        body={
+          <p>Change status from <strong>{ticket.status}</strong> to <strong>{pendingStatus}</strong>?</p>
+        }
+      />
+
+      <ConfirmModal
+        open={showPriorityConfirm}
+        title="Change ticket priority?"
+        isDark={isDark}
+        confirmLabel="Yes, Change"
+        onConfirm={() => { if (pendingPriority) updateTicketPriority(ticket.id, pendingPriority); setShowPriorityConfirm(false); setPendingPriority(null); }}
+        onCancel={() => { setShowPriorityConfirm(false); setPendingPriority(null); }}
+        body={
+          <p>Change priority from <strong>{ticket.priority}</strong> to <strong>{pendingPriority}</strong>?</p>
+        }
+      />
+
+      <ConfirmModal
+        open={showAssignConfirm}
+        title="Reassign ticket?"
+        isDark={isDark}
+        confirmLabel="Yes, Reassign"
+        onConfirm={() => { if (pendingAssignee) assignMutation.mutate(pendingAssignee.id); setShowAssignConfirm(false); setPendingAssignee(null); }}
+        onCancel={() => { setShowAssignConfirm(false); setPendingAssignee(null); }}
+        body={<p>Assign this ticket to <strong>{pendingAssignee?.label}</strong>?</p>}
+      />
+
+      <ConfirmModal
+        open={showEscalateModal}
+        title="Escalate to Main Branch"
+        isDark={isDark}
+        variant="warning"
+        confirmLabel="Confirm Escalation"
+        confirmDisabled={!escalationNotes.trim()}
+        onConfirm={handleEscalate}
+        onCancel={() => { setShowEscalateModal(false); setEscalationNotes(''); }}
+        body={
+          <div className="space-y-3">
+            <p>Describe why Main Branch intervention is required:</p>
+            <textarea
+              rows={3}
+              value={escalationNotes}
+              onChange={e => setEscalationNotes(e.target.value)}
+              placeholder="e.g. Issue is beyond branch-level resolution. 28 agents down, VoIP vendor contacted. Need Main Branch support."
+              className={`w-full px-4 py-2.5 border rounded-lg text-sm resize-none outline-none focus:ring-2 focus:ring-orange-500 ${isDark ? 'bg-slate-950 border-slate-700 text-white placeholder-slate-500' : 'bg-white border-gray-300 text-slate-900'}`}
+              autoFocus
+            />
+          </div>
+        }
+      />
+
+      <ConfirmModal
+        open={showResolveEscModal}
+        title="Mark Escalation Resolved"
+        isDark={isDark}
+        variant="primary"
+        confirmLabel="Confirm Resolution"
+        onConfirm={() => {
+          resolveEscalation(ticket.id);
+          setShowResolveEscModal(false);
+          setResolveEscNotes('');
+        }}
+        onCancel={() => { setShowResolveEscModal(false); setResolveEscNotes(''); }}
+        body={
+          <div className="space-y-3">
+            <p>
+              Confirm that ticket <strong>{ticket.ticket_number ?? ticket.id.slice(0, 8)}</strong> has been
+              resolved at the Main Branch level. The branch team will be notified.
+            </p>
+            <textarea
+              rows={3}
+              value={resolveEscNotes}
+              onChange={e => setResolveEscNotes(e.target.value)}
+              placeholder="Optional — summarise the resolution action taken by Main Branch…"
+              className={`w-full px-4 py-2.5 border rounded-lg text-sm resize-none outline-none focus:ring-2 focus:ring-blue-500 ${isDark ? 'bg-slate-950 border-slate-700 text-white placeholder-slate-500' : 'bg-white border-gray-300 text-slate-900'}`}
+              autoFocus
+            />
+          </div>
+        }
+      />
     </div>
   );
 };

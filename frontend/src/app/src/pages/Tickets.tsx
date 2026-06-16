@@ -91,7 +91,7 @@ export const Tickets = () => {
   const isDark    = theme === 'dark';
 
   const isMainOrAdmin =
-    (currentUser.role === 'Branch IT Supervisor' && currentUser.branch === 'Main Branch') ||
+    currentUser.role === 'Main Branch IT Supervisor' ||
     currentUser.role === 'Main Branch IT Manager';
 
   const [tab,              setTab]              = useState<'tickets' | 'floorwide'>('tickets');
@@ -104,9 +104,10 @@ export const Tickets = () => {
   const [escalationFilter, setEscalationFilter] = useState<EscalationStatus | 'All'>((searchParams.get('escalation') as EscalationStatus) || ALL);
   const [filtersOpen,      setFiltersOpen]      = useState(true);
 
-  // Scope by role / branch
+  // Scope by role / branch — the backend already filters agents to their own tickets,
+  // so no frontend re-filter is needed; non-manager roles are branch-scoped by the API too.
   const scopedTickets = tickets.filter(t => {
-    if (currentUser.role === 'Agent (end-user)') return t.creator === currentUser.name;
+    if (currentUser.role === 'Agent (end-user)') return true;
     if (isMainOrAdmin) return true;
     return t.branch === currentUser.branch;
   });

@@ -7,6 +7,7 @@
 import React, { useEffect, useRef } from 'react';
 import { useTickets }       from '../context/TicketContext';
 import { useNotifications } from '../context/NotificationContext';
+import { useAuth }          from '../context/AuthContext';
 import { SLA_HOURS }        from '../types';
 
 const SCAN_INTERVAL_MS = 30_000; // 30 s
@@ -14,6 +15,7 @@ const SCAN_INTERVAL_MS = 30_000; // 30 s
 export const SLAScanner: React.FC = () => {
   const { tickets }                         = useTickets();
   const { addNotification, slaFired, markSLAFired } = useNotifications();
+  const { currentAccount }                  = useAuth();
 
   // Keep refs so the interval callback always sees the latest values
   const ticketsRef   = useRef(tickets);
@@ -28,6 +30,11 @@ export const SLAScanner: React.FC = () => {
 
   useEffect(() => {
     const scan = () => {
+      // Agents don't act on tickets — only IT staff should receive SLA warnings
+      if (currentAccount?.role === 'Agent (end-user)') return;
+      // Respect the SLA Breach Alerts toggle stored in localStorage by SystemConfig
+      if (localStorage.getItem('cfg_slaAlerts') === 'false') return;
+
       const now = Date.now();
       ticketsRef.current.forEach(ticket => {
         if (ticket.status === 'Resolved')           return;
@@ -43,7 +50,7 @@ export const SLAScanner: React.FC = () => {
 
           addNotifRef.current({
             type:     'sla_warning',
-            title:    `SLA ${isBreached ? 'Breach' : 'Warning'} — ${ticket.id}`,
+            title:    isBreached ? 'SLA Breach' : 'SLA Warning',
             message:  `${ticket.title} — ${pctLabel}% of the ${SLA_HOURS[ticket.priority]}h ${ticket.priority} SLA has elapsed. ${ticket.agentsAffected} agent(s) affected on ${ticket.shift} shift.`,
             branch:   ticket.branch,
             ticketId: ticket.id,

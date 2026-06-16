@@ -10,6 +10,7 @@ from rest_framework_simplejwt.tokens import RefreshToken
 from .models import Branch, UserProfile
 from .permissions import IsBranchSupervisorOrAbove, IsMainITManager
 from .serializers import (
+    BranchDetailSerializer,
     BranchSerializer,
     LoginSerializer,
     UserCreateSerializer,
@@ -32,11 +33,99 @@ class LoginView(APIView):
         }, status=status.HTTP_200_OK)
 
 
+class GoogleLoginView(APIView):
+    permission_classes = (AllowAny,)
+
+    def post(self, request):
+        import urllib.request
+        import urllib.parse
+        import json
+        from django.conf import settings
+
+        credential = request.data.get('credential', '').strip()
+        if not credential:
+            return Response({'detail': 'No credential provided.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        client_id = settings.GOOGLE_OAUTH_CLIENT_ID
+        if not client_id:
+            return Response({'detail': 'Google OAuth is not configured on this server.'}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+
+        # Verify the ID token via Google's tokeninfo endpoint (no local cert fetching needed)
+        url = 'https://oauth2.googleapis.com/tokeninfo?' + urllib.parse.urlencode({'id_token': credential})
+        try:
+            with urllib.request.urlopen(url, timeout=10) as resp:
+                idinfo = json.loads(resp.read().decode())
+        except Exception:
+            return Response({'detail': 'Could not verify Google token. Please try again.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        if idinfo.get('aud') != client_id:
+            return Response({'detail': 'Google token was not issued for this application.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        email = idinfo.get('email')
+        if not email or idinfo.get('email_verified') != 'true':
+            return Response({'detail': 'Google account email is not verified.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            user = UserProfile.objects.get(email=email, is_active=True)
+        except UserProfile.DoesNotExist:
+            return Response(
+                {'detail': 'No active account found for this Google email. Contact your IT administrator.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        refresh = RefreshToken.for_user(user)
+        return Response({
+            'access': str(refresh.access_token),
+            'refresh': str(refresh),
+            'user': UserProfileSerializer(user).data,
+        }, status=status.HTTP_200_OK)
+
+
 class MeView(APIView):
     permission_classes = (IsAuthenticated,)
 
     def get(self, request):
         return Response(UserProfileSerializer(request.user).data)
+
+    def patch(self, request):
+        user = request.user
+        first_name       = request.data.get('first_name')
+        last_name        = request.data.get('last_name')
+        current_password = request.data.get('current_password', '')
+        new_password     = request.data.get('new_password', '')
+
+        save_fields = []
+
+        if first_name is not None:
+            user.first_name = first_name.strip()
+            save_fields.append('first_name')
+        if last_name is not None:
+            user.last_name = last_name.strip()
+            save_fields.append('last_name')
+
+        if new_password:
+            if not current_password:
+                return Response(
+                    {'current_password': 'Current password is required.'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            if not user.check_password(current_password):
+                return Response(
+                    {'current_password': 'Incorrect current password.'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            if len(new_password) < 8:
+                return Response(
+                    {'new_password': 'Password must be at least 8 characters.'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            user.set_password(new_password)
+            save_fields.append('password')
+
+        if save_fields:
+            user.save(update_fields=save_fields)
+
+        return Response(UserProfileSerializer(user).data)
 
 
 class LogoutView(APIView):
@@ -61,9 +150,24 @@ class LogoutView(APIView):
 
 
 class BranchViewSet(ModelViewSet):
-    queryset = Branch.objects.all().order_by('name')
-    serializer_class = BranchSerializer
+    serializer_class = BranchDetailSerializer
     http_method_names = ['get', 'post', 'patch', 'head', 'options']
+
+    def get_queryset(self):
+        from django.db.models import Count, Q
+        return Branch.objects.annotate(
+            agent_count=Count(
+                'users',
+                filter=Q(users__role='agent', users__is_active=True),
+            ),
+            it_staff_count=Count(
+                'users',
+                filter=Q(
+                    users__role__in=['branch_technician', 'branch_supervisor'],
+                    users__is_active=True,
+                ),
+            ),
+        ).order_by('name')
 
     def get_permissions(self):
         if self.action in ('create', 'partial_update'):

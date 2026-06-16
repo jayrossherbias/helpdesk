@@ -13,8 +13,11 @@ import {
   getTicket as apiGetTicket,
   createTicket as apiCreateTicket,
   updateTicketStatus as apiUpdateTicketStatus,
+  updateTicketPriority as apiUpdateTicketPriority,
+  updateResolutionNotes as apiUpdateResolutionNotes,
   escalateTicket as apiEscalateTicket,
   markFloorWide as apiMarkFloorWide,
+  resolveEscalationApi,
 } from '../../../api/tickets';
 
 // ── Adapter maps ───────────────────────────────────────────────
@@ -64,10 +67,11 @@ function mapApiTicket(t: ApiTicket): Ticket {
   } else {
     // Derive a minimal timeline from available ticket fields
     history = [];
-    const submitter = t.submitted_by?.username ?? 'Unknown';
+    const submitter = t.submitted_by?.display_name ?? t.submitted_by?.username ?? 'Unknown';
     history.push({ id: `${t.id}-created`, action: `Ticket submitted by ${submitter}.`, timestamp: t.created_at, actor: submitter });
     if (t.assigned_to) {
-      history.push({ id: `${t.id}-assigned`, action: `Auto-assigned to ${t.assigned_to.username} by routing engine.`, timestamp: t.created_at, actor: 'System' });
+      const assigneeName = t.assigned_to.display_name ?? t.assigned_to.username;
+      history.push({ id: `${t.id}-assigned`, action: `Auto-assigned to ${assigneeName} by routing engine.`, timestamp: t.created_at, actor: 'System' });
     }
     if (escalationLog) {
       history.push({ id: `${t.id}-escalated`, action: `Escalated to Main Branch · Reason: ${escalationLog.reason}`, timestamp: escalationLog.escalated_at, actor: escalationLog.escalated_by?.username ?? 'Unknown' });
@@ -97,8 +101,8 @@ function mapApiTicket(t: ApiTicket): Ticket {
     priority:       API_PRIORITY_TO_FIGMA[t.priority] ?? 'Low',
     status:         API_STATUS_TO_FIGMA[t.status] ?? 'Open',
     urgency:        (t.urgency ?? 'minor_issue') as Urgency,
-    assignee:       t.assigned_to?.username ?? 'Unassigned',
-    creator:        t.submitted_by?.username ?? 'Unknown',
+    assignee:       t.assigned_to?.display_name ?? t.assigned_to?.username ?? 'Unassigned',
+    creator:        t.submitted_by?.display_name ?? t.submitted_by?.username ?? 'Unknown',
     branch:         (t.branch?.name ?? 'Main Branch') as any,
     shift:          API_SHIFT_TO_FIGMA[t.shift] ?? 'Morning',
     agentsAffected: t.agents_affected,
@@ -111,8 +115,11 @@ function mapApiTicket(t: ApiTicket): Ticket {
       : 'Not Escalated',
     escalatedAt:    escalationLog?.escalated_at,
     escalationNotes: escalationLog?.reason,
+    resolutionNotes: t.resolution_notes ?? '',
+    slaStatus:      t.sla_status ?? 'on_track',
     createdAt:      t.created_at,
     updatedAt:      t.updated_at,
+    resolvedAt:     t.resolved_at ?? null,
     history,
   };
 }
@@ -137,6 +144,7 @@ interface TicketContextType {
   ) => Promise<boolean>;
   updateTicketStatus: (id: string, status: Status) => void;
   updateTicketPriority: (id: string, priority: Priority) => void;
+  updateResolutionNotes: (id: string, notes: string) => Promise<void>;
   assignTicket: (id: string, assignee: string) => void;
   escalateTicket: (id: string, notes: string) => void;
   resolveEscalation: (id: string) => void;
@@ -175,12 +183,12 @@ export const TicketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     onSuccess: (updated, { id, status }) => {
       invalidate();
       toast.success(`Ticket marked as ${status}`);
-      if (status === 'resolved') {
+      if (status === 'resolved' && localStorage.getItem('cfg_emailNotifs') !== 'false') {
         const t = tickets.find(tk => tk.id === id);
         if (t) {
           addNotification({
             type: 'ticket_resolved',
-            title: `Ticket Resolved — ${id}`,
+            title: 'Ticket Resolved',
             message: `${t.title} resolved by ${currentUser.name}.`,
             branch: t.branch,
             ticketId: id,
@@ -192,6 +200,27 @@ export const TicketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     onError: () => toast.error('Failed to update ticket status.'),
   });
 
+  const resolutionMutation = useMutation({
+    mutationFn: ({ id, notes }: { id: string; notes: string }) =>
+      apiUpdateResolutionNotes(id, notes),
+    onSuccess: (_, { id }) => {
+      invalidate();
+      queryClient.invalidateQueries({ queryKey: ['ticket', id] });
+      toast.success('Resolution notes saved.');
+    },
+    onError: () => toast.error('Failed to save resolution notes.'),
+  });
+
+  const priorityMutation = useMutation({
+    mutationFn: ({ id, priority }: { id: string; priority: string }) =>
+      apiUpdateTicketPriority(id, priority),
+    onSuccess: (_, { priority }) => {
+      invalidate();
+      toast.success(`Priority updated to ${priority}`);
+    },
+    onError: () => toast.error('Failed to update ticket priority.'),
+  });
+
   const escalateMutation = useMutation({
     mutationFn: ({ id, reason }: { id: string; reason: string }) =>
       apiEscalateTicket(id, reason),
@@ -199,10 +228,10 @@ export const TicketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       invalidate();
       toast.warning(`Ticket ${id} escalated to Main Branch`);
       const t = tickets.find(tk => tk.id === id);
-      if (t) {
+      if (t && localStorage.getItem('cfg_emailNotifs') !== 'false') {
         addNotification({
           type: 'escalation',
-          title: `Escalation Triggered — ${id}`,
+          title: 'Escalation Triggered',
           message: `${t.title} escalated by ${currentUser.name}. ${reason}`,
           branch: t.branch,
           ticketId: id,
@@ -242,14 +271,16 @@ export const TicketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       });
       await invalidate();
       const mappedTicket = mapApiTicket(created as ApiTicket);
-      addNotification({
-        type:     'ticket_assigned',
-        title:    `New Ticket — ${created.id.slice(0, 8)}`,
-        message:  `${title} submitted. Priority: ${mappedTicket.priority}. Assigned: ${mappedTicket.assignee}.`,
-        branch:   currentUser.branch,
-        ticketId: created.id,
-        priority: mappedTicket.priority,
-      });
+      if (localStorage.getItem('cfg_emailNotifs') !== 'false') {
+        addNotification({
+          type:     'ticket_assigned',
+          title:    'New Ticket',
+          message:  `${title} submitted. Priority: ${mappedTicket.priority}. Assigned: ${mappedTicket.assignee}.`,
+          branch:   currentUser.branch,
+          ticketId: created.id,
+          priority: mappedTicket.priority,
+        });
+      }
       toast.success('Ticket submitted successfully!');
       setTimeout(() => {
         toast.info(`Auto-routed to ${mappedTicket.assignee} · ${mappedTicket.priority} priority`, {
@@ -274,8 +305,13 @@ export const TicketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     statusMutation.mutate({ id, status: FIGMA_STATUS_TO_API[status] });
   };
 
-  const updateTicketPriority = (_id: string, priority: Priority) => {
-    toast.info(`Priority update to ${priority} — no backend endpoint available.`);
+  const updateTicketPriority = (id: string, priority: Priority) => {
+    const apiPriority = priority.toLowerCase();
+    priorityMutation.mutate({ id, priority: apiPriority });
+  };
+
+  const updateResolutionNotes = async (id: string, notes: string) => {
+    await resolutionMutation.mutateAsync({ id, notes });
   };
 
   const assignTicket = (_id: string, assignee: string) => {
@@ -287,7 +323,13 @@ export const TicketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   };
 
   const resolveEscalation = (id: string) => {
-    statusMutation.mutate({ id, status: 'resolved' });
+    resolveEscalationApi(id)
+      .then(() => {
+        invalidate();
+        queryClient.invalidateQueries({ queryKey: ['ticket', id] });
+        toast.success('Escalation marked as resolved by Main Branch.');
+      })
+      .catch(() => toast.error('Failed to resolve escalation.'));
   };
 
   const markFloorWide = async (id: string, floorTeam?: string) => {
@@ -309,6 +351,7 @@ export const TicketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       createTicket,
       updateTicketStatus,
       updateTicketPriority,
+      updateResolutionNotes,
       assignTicket,
       escalateTicket,
       resolveEscalation,

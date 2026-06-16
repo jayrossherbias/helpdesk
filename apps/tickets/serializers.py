@@ -4,7 +4,7 @@ from rest_framework import serializers
 
 from apps.accounts.models import UserProfile
 from apps.escalations.models import EscalationLog
-from .models import Ticket, TicketLog
+from .models import Ticket, TicketLog, SystemSettings
 
 
 class _BranchSerializer(serializers.Serializer):
@@ -15,6 +15,10 @@ class _BranchSerializer(serializers.Serializer):
 class _UserSerializer(serializers.Serializer):
     id = serializers.IntegerField()
     username = serializers.CharField()
+    display_name = serializers.SerializerMethodField()
+
+    def get_display_name(self, obj):
+        return obj.get_full_name().strip() or obj.username
 
 
 class _MajorIncidentSerializer(serializers.Serializer):
@@ -31,8 +35,13 @@ class _RelatedTicketSerializer(serializers.Serializer):
 
 
 def _compute_sla_status(ticket):
-    if not ticket.sla_deadline or ticket.status == Ticket.Status.RESOLVED:
+    if not ticket.sla_deadline:
         return 'on_track'
+    if ticket.status == Ticket.Status.RESOLVED:
+        resolved = ticket.resolved_at or ticket.updated_at
+        if resolved and resolved > ticket.sla_deadline:
+            return 'resolved_breached'
+        return 'resolved_within_sla'
     now = timezone.now()
     if ticket.sla_deadline <= now:
         return 'breached'
@@ -55,8 +64,8 @@ class TicketListSerializer(serializers.ModelSerializer):
         fields = (
             'id', 'ticket_number', 'title', 'category', 'priority', 'status', 'urgency',
             'branch', 'agents_affected', 'floor_team', 'is_floor_wide', 'sla_deadline', 'sla_status',
-            'assigned_to', 'submitted_by', 'escalated', 'shift', 'created_at',
-            'related_to',
+            'assigned_to', 'submitted_by', 'escalated', 'shift', 'created_at', 'resolved_at',
+            'related_to', 'resolution_notes',
         )
 
     def get_sla_status(self, obj):
@@ -71,7 +80,9 @@ class _TicketLogSerializer(serializers.ModelSerializer):
         fields = ('id', 'action', 'actor', 'created_at')
 
     def get_actor(self, obj):
-        return obj.actor.username if obj.actor else 'System'
+        if not obj.actor:
+            return 'System'
+        return obj.actor.get_full_name().strip() or obj.actor.username
 
 
 class _EscalationLogSerializer(serializers.ModelSerializer):
@@ -98,7 +109,7 @@ class TicketDetailSerializer(TicketListSerializer):
         fields = TicketListSerializer.Meta.fields + (
             'description', 'floor_team', 'is_floor_wide',
             'submitted_by', 'major_incident', 'escalation_log', 'updated_at', 'logs',
-            'follow_ups',
+            'follow_ups', 'resolution_notes',
         )
 
     def get_follow_ups(self, obj):
@@ -165,3 +176,9 @@ class TicketCreateSerializer(serializers.ModelSerializer):
                 submitter=request.user,
             )
             return super().create(validated_data)
+
+
+class SystemSettingsSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = SystemSettings
+        fields = ['auto_routing', 'auto_priority', 'email_notifications', 'sla_alerts']

@@ -1,18 +1,22 @@
 import axios, { type InternalAxiosRequestConfig } from 'axios'
 import { toast } from 'sonner'
 
-// ── In-memory token store (never touches localStorage) ────────────────────────
+// ── Token store — access in memory, refresh persisted to localStorage ─────────
+const REFRESH_KEY = 'helpdesk_rt'
+
 let accessToken: string | null = null
-let refreshToken: string | null = null
+let refreshToken: string | null = localStorage.getItem(REFRESH_KEY)
 
 export function setTokens(access: string, refresh: string) {
   accessToken = access
   refreshToken = refresh
+  localStorage.setItem(REFRESH_KEY, refresh)
 }
 
 export function clearTokens() {
   accessToken = null
   refreshToken = null
+  localStorage.removeItem(REFRESH_KEY)
 }
 
 export function getAccessToken() {
@@ -70,7 +74,9 @@ client.interceptors.response.use(
 
     if (!refreshToken) {
       clearTokens()
-      if (window.location.pathname !== '/login') {
+      // Don't redirect on auth endpoints themselves (login, google-login, etc.)
+      const isAuthEndpoint = original.url?.includes('/auth/')
+      if (!isAuthEndpoint && window.location.pathname !== '/login') {
         window.location.href = '/login'
       }
       return Promise.reject(error)
@@ -90,7 +96,7 @@ client.interceptors.response.use(
 
     try {
       const { data } = await axios.post(
-        `${client.defaults.baseURL}/auth/login/`,
+        `${client.defaults.baseURL}/auth/token/refresh/`,
         { refresh: refreshToken },
       )
       setTokens(data.access, data.refresh ?? refreshToken!)

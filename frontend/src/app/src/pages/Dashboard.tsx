@@ -1,7 +1,10 @@
 import React, { useState } from 'react';
+import { createPortal } from 'react-dom';
 import { Navigate, useNavigate } from 'react-router';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useTickets } from '../context/TicketContext';
 import { useTheme } from '../context/ThemeContext';
+import { shiftHandover } from '../../../api/tickets';
 import {
   PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend,
   BarChart, Bar, XAxis, YAxis, CartesianGrid,
@@ -9,7 +12,7 @@ import {
 import {
   AlertCircle, AlertTriangle, CheckCircle, Clock, TrendingUp,
   Building2, Globe, Zap, Ticket, Users, Timer, ShieldAlert,
-  ArrowRight, Activity, ArrowUpRight,
+  ArrowRight, Activity, ArrowUpRight, RefreshCw,
 } from 'lucide-react';
 import { BRANCHES, BRANCH_CONFIG, BPO_CATEGORIES, getActiveShift, Branch, SLA_HOURS, Priority, Ticket as TicketType } from '../types';
 
@@ -20,6 +23,10 @@ const SHIFT_META: Record<string, { badge: string; badgeLight: string; label: str
   Morning:   { badge: 'bg-amber-500/15 text-amber-400 border-amber-500/30',    badgeLight: 'bg-amber-50 text-amber-700 border-amber-300',    label: 'Morning',   hours: '6 AM – 2 PM'   },
   Afternoon: { badge: 'bg-sky-500/15 text-sky-400 border-sky-500/30',          badgeLight: 'bg-sky-50 text-sky-700 border-sky-300',          label: 'Afternoon', hours: '2 PM – 10 PM'  },
   Night:     { badge: 'bg-indigo-500/15 text-indigo-400 border-indigo-500/30', badgeLight: 'bg-indigo-50 text-indigo-700 border-indigo-300', label: 'Night',     hours: '10 PM – 6 AM'  },
+};
+
+const PREV_SHIFT: Record<string, string> = {
+  Morning: 'Night', Afternoon: 'Morning', Night: 'Afternoon',
 };
 
 const PRIORITY_STYLE: Record<Priority, { bar: string; text: string; badge: string; badgeLight: string }> = {
@@ -46,11 +53,16 @@ const calcCompliance = (tickets: TicketType[]) =>
     : 100;
 
 const avgResolutionDisplay = (tickets: TicketType[]) => {
-  const resolved = tickets.filter(t => t.status === 'Resolved');
-  if (!resolved.length) return '—';
-  const avgMs = resolved.reduce((acc, t) =>
-    acc + (new Date(t.updatedAt).getTime() - new Date(t.createdAt).getTime()), 0) / resolved.length;
-  const hrs = avgMs / 3_600_000;
+  const durations = tickets
+    .filter(t => t.status === 'Resolved')
+    .map(t => {
+      const end   = new Date(t.resolvedAt ?? t.updatedAt).getTime();
+      const start = new Date(t.createdAt).getTime();
+      return isNaN(end) || isNaN(start) || end <= start ? null : end - start;
+    })
+    .filter((d): d is number => d !== null);
+  if (!durations.length) return '—';
+  const hrs = (durations.reduce((a, b) => a + b, 0) / durations.length) / 3_600_000;
   if (hrs < 1)  return `${Math.round(hrs * 60)}m`;
   if (hrs < 24) return `${hrs.toFixed(1)}h`;
   return `${(hrs / 24).toFixed(1)}d`;
@@ -70,11 +82,37 @@ const BranchDashboard = () => {
   const { theme } = useTheme();
   const navigate  = useNavigate();
   const isDark    = theme === 'dark';
-  const shift     = getActiveShift();
-  const shiftMeta = SHIFT_META[shift];
+  const shift         = getActiveShift();
+  const shiftMeta     = SHIFT_META[shift];
+  const prevShift     = PREV_SHIFT[shift];
+  const prevShiftMeta = SHIFT_META[prevShift];
+  const queryClient = useQueryClient();
+
+  const [showHandover, setShowHandover]     = useState(false);
+  const [handoverResult, setHandoverResult] = useState<{
+    reassigned_count: number; new_assignee_full_name: string; current_shift: string;
+  } | null>(null);
+  const [excludedIds, setExcludedIds] = useState<Set<string>>(new Set());
+
+  const handoverMutation = useMutation({
+    mutationFn: shiftHandover,
+    onSuccess: (data) => {
+      setHandoverResult(data);
+      queryClient.invalidateQueries({ queryKey: ['tickets'] });
+    },
+  });
 
   const mine  = tickets.filter(t => t.branch === currentUser.branch);
   const today = new Date().toDateString();
+
+  const handoverCandidates = mine.filter(t => t.status === 'Open' || t.status === 'In Progress');
+  const selectedCount = handoverCandidates.filter(t => !excludedIds.has(t.id)).length;
+  const toggleHandoverTicket = (id: string) =>
+    setExcludedIds(prev => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n; });
+  const toggleAllHandover = () =>
+    setExcludedIds(handoverCandidates.every(t => !excludedIds.has(t.id))
+      ? new Set(handoverCandidates.map(t => t.id))
+      : new Set());
 
   // ── Stat card counts ──────────────────────────────────────
   const openCount     = mine.filter(t => t.status === 'Open').length;
@@ -120,7 +158,7 @@ const BranchDashboard = () => {
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <div className="flex items-center gap-3 mb-1">
-            <span className={`w-3 h-3 rounded-full ${BRANCH_CONFIG[currentUser.branch].dotClass}`} />
+            <span className={`w-3 h-3 rounded-full ${(BRANCH_CONFIG[currentUser.branch] ?? { dotClass: 'bg-slate-500' }).dotClass}`} />
             <h1 className={`text-2xl ${isDark ? 'text-white' : 'text-gray-900'}`}>
               {currentUser.branch} — IT Operations
             </h1>
@@ -143,6 +181,16 @@ const BranchDashboard = () => {
               <AlertTriangle size={12} />
               {criticalOpen} Critical Open
             </div>
+          )}
+          {/* Shift Handover — supervisor only */}
+          {currentUser.role === 'Branch IT Supervisor' && (
+            <button
+              onClick={() => { setHandoverResult(null); setExcludedIds(new Set()); setShowHandover(true); }}
+              className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-full border text-xs font-medium transition-colors ${isDark ? 'border-slate-700 text-slate-300 hover:bg-slate-800' : 'border-gray-300 text-gray-600 hover:bg-gray-100'}`}
+            >
+              <RefreshCw size={12} />
+              Shift Handover
+            </button>
           )}
         </div>
       </div>
@@ -233,62 +281,54 @@ const BranchDashboard = () => {
       </div>
 
       {/* ── SLA COMPLIANCE CARD ── */}
-      <div className={`${card} p-6`}>
-        <div className="flex flex-wrap items-start justify-between gap-4 mb-5">
-          <div>
-            <h2 className={`text-base flex items-center gap-2 ${isDark ? 'text-white' : 'text-gray-800'}`}>
-              <Timer size={17} className={isDark ? 'text-slate-400' : 'text-gray-400'} />
-              SLA Compliance — {shiftMeta.label} Shift
-            </h2>
-            <p className={`text-xs mt-1 ${isDark ? 'text-slate-500' : 'text-gray-400'}`}>
-              Target ≥ 90% · {slaBreaches} breach{slaBreaches !== 1 ? 'es' : ''} · {slaAtRisk} at risk
-            </p>
+      <div className={`${card} px-5 py-4`}>
+        {/* Row 1: title · status chips · overall % */}
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-2 mb-2">
+          <h2 className={`flex items-center gap-2 text-sm shrink-0 ${isDark ? 'text-white' : 'text-gray-800'}`}>
+            <Timer size={15} className={isDark ? 'text-slate-400' : 'text-gray-400'} />
+            SLA Compliance — {shiftMeta.label} Shift
+          </h2>
+          <div className="flex flex-wrap gap-2">
+            {[
+              { label: 'On Track',  count: mine.filter(t => getSLAStatus(t) === 'On Track').length,  cls: isDark ? 'bg-green-500/10 text-green-400 border-green-500/20' : 'bg-green-50 text-green-700 border-green-200' },
+              { label: 'At Risk',   count: slaAtRisk,                                                cls: isDark ? 'bg-amber-500/10 text-amber-400 border-amber-500/20' : 'bg-amber-50 text-amber-700 border-amber-200' },
+              { label: 'Breached',  count: slaBreaches,                                              cls: isDark ? 'bg-red-500/10 text-red-400 border-red-500/20'       : 'bg-red-50 text-red-700 border-red-200' },
+              { label: 'Resolved',  count: mine.filter(t => getSLAStatus(t) === 'Resolved').length,  cls: isDark ? 'bg-slate-800 text-slate-400 border-slate-700'       : 'bg-gray-100 text-gray-600 border-gray-200' },
+            ].map(({ label, count, cls }) => (
+              <span key={label} className={`inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full border ${cls}`}>
+                {label}: <strong>{count}</strong>
+              </span>
+            ))}
           </div>
-          <div className={`text-3xl font-light ${complianceColor(sla)}`}>{sla}%</div>
+          <div className={`ml-auto text-2xl font-light shrink-0 ${complianceColor(sla)}`}>{sla}%</div>
         </div>
 
-        {/* Overall bar */}
-        <div className={`h-3 rounded-full overflow-hidden mb-5 ${isDark ? 'bg-slate-800' : 'bg-gray-100'}`}>
+        {/* Row 2: overall progress bar */}
+        <div className={`h-2 rounded-full overflow-hidden mb-3 ${isDark ? 'bg-slate-800' : 'bg-gray-100'}`}>
           <div
             className={`h-full rounded-full transition-all duration-700 ${complianceBar(sla)}`}
             style={{ width: `${sla}%` }}
           />
         </div>
 
-        {/* Per-priority breakdown */}
+        {/* Row 3: per-priority breakdown as a compact inline list */}
         {prioritySLARows.length > 0 && (
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          <div className={`flex flex-wrap gap-x-6 gap-y-1 pt-2 border-t ${isDark ? 'border-slate-800' : 'border-gray-100'}`}>
             {prioritySLARows.map(({ p, total, comp }) => {
               const ps = PRIORITY_STYLE[p];
               return (
-                <div key={p} className={`px-3 py-3 rounded-lg border ${isDark ? 'bg-slate-950 border-slate-800' : 'bg-gray-50 border-gray-100'}`}>
-                  <div className="flex items-center justify-between mb-2">
-                    <span className={`text-xs font-medium ${isDark ? ps.text : ''}`}>{p}</span>
-                    <span className={`text-xs ${complianceColor(comp)}`}>{comp}%</span>
-                  </div>
-                  <div className={`h-1.5 rounded-full overflow-hidden ${isDark ? 'bg-slate-800' : 'bg-gray-200'}`}>
+                <div key={p} className="flex items-center gap-2 min-w-[120px]">
+                  <span className={`text-xs font-medium w-16 ${isDark ? ps.text : ps.text}`}>{p}</span>
+                  <div className={`flex-1 h-1.5 rounded-full overflow-hidden ${isDark ? 'bg-slate-800' : 'bg-gray-200'}`}>
                     <div className={`h-full rounded-full ${complianceBar(comp)}`} style={{ width: `${comp}%` }} />
                   </div>
-                  <p className={`text-xs mt-1.5 ${isDark ? 'text-slate-600' : 'text-gray-400'}`}>{total} ticket{total !== 1 ? 's' : ''}</p>
+                  <span className={`text-xs tabular-nums w-8 text-right ${complianceColor(comp)}`}>{comp}%</span>
+                  <span className={`text-xs ${isDark ? 'text-slate-600' : 'text-gray-400'}`}>· {total} ticket{total !== 1 ? 's' : ''}</span>
                 </div>
               );
             })}
           </div>
         )}
-
-        {/* SLA status chips */}
-        <div className="flex flex-wrap gap-3 mt-4 pt-4 border-t border-slate-800/50">
-          {[
-            { label: 'On Track',  count: mine.filter(t => getSLAStatus(t) === 'On Track').length,  cls: isDark ? 'bg-green-500/10 text-green-400 border-green-500/20' : 'bg-green-50 text-green-700 border-green-200' },
-            { label: 'At Risk',   count: slaAtRisk,                                                cls: isDark ? 'bg-amber-500/10 text-amber-400 border-amber-500/20' : 'bg-amber-50 text-amber-700 border-amber-200' },
-            { label: 'Breached',  count: slaBreaches,                                              cls: isDark ? 'bg-red-500/10 text-red-400 border-red-500/20'       : 'bg-red-50 text-red-700 border-red-200' },
-            { label: 'Resolved',  count: mine.filter(t => getSLAStatus(t) === 'Resolved').length,  cls: isDark ? 'bg-slate-800 text-slate-400 border-slate-700'       : 'bg-gray-100 text-gray-600 border-gray-200' },
-          ].map(({ label, count, cls }) => (
-            <span key={label} className={`inline-flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full border ${cls}`}>
-              {label}: <strong>{count}</strong>
-            </span>
-          ))}
-        </div>
       </div>
 
       {/* ── FLOOR-WIDE INCIDENTS ── */}
@@ -487,6 +527,173 @@ const BranchDashboard = () => {
           </div>
         </div>
       )}
+
+      {/* ── SHIFT HANDOVER MODAL ── */}
+      {showHandover && createPortal(
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+          <div className={`w-full max-w-md rounded-2xl border shadow-2xl p-6 ${isDark ? 'bg-slate-900 border-slate-700' : 'bg-white border-gray-200'}`}>
+
+            {!handoverResult ? (
+              <>
+                {/* Header */}
+                <div className="flex items-center gap-3 mb-5">
+                  <div className={`p-2.5 rounded-xl ${isDark ? 'bg-sky-500/10' : 'bg-sky-50'}`}>
+                    <RefreshCw size={18} className="text-sky-400" />
+                  </div>
+                  <div>
+                    <h2 className={`text-base font-medium ${isDark ? 'text-white' : 'text-gray-900'}`}>Shift Handover</h2>
+                    <p className={`text-xs ${isDark ? 'text-slate-400' : 'text-gray-500'}`}>
+                      Transfer tickets from {prevShiftMeta.label} to {shiftMeta.label} shift
+                    </p>
+                  </div>
+                </div>
+
+                {/* Shift info */}
+                <div className={`rounded-xl border p-4 mb-4 space-y-3 ${isDark ? 'bg-slate-950 border-slate-800' : 'bg-gray-50 border-gray-200'}`}>
+                  <div className="flex justify-between items-center">
+                    <span className={`text-xs ${isDark ? 'text-slate-400' : 'text-gray-500'}`}>Outgoing shift</span>
+                    <span className={`text-xs font-medium px-2.5 py-0.5 rounded-full border ${isDark ? prevShiftMeta.badge : prevShiftMeta.badgeLight}`}>
+                      {prevShiftMeta.label} · {prevShiftMeta.hours}
+                    </span>
+                  </div>
+                  <div className="flex justify-between items-center">
+                    <span className={`text-xs ${isDark ? 'text-slate-400' : 'text-gray-500'}`}>Taking over</span>
+                    <span className={`text-xs font-medium px-2.5 py-0.5 rounded-full border ${isDark ? shiftMeta.badge : shiftMeta.badgeLight}`}>
+                      {shiftMeta.label} · {shiftMeta.hours}
+                    </span>
+                  </div>
+                </div>
+
+                {/* Ticket selection */}
+                <div className="mb-4">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className={`text-xs font-medium ${isDark ? 'text-slate-300' : 'text-gray-700'}`}>
+                      Tickets to transfer
+                      <span className={`ml-2 px-1.5 py-0.5 rounded text-[10px] font-semibold ${isDark ? 'bg-sky-500/15 text-sky-400' : 'bg-sky-100 text-sky-700'}`}>
+                        {selectedCount} of {handoverCandidates.length}
+                      </span>
+                    </span>
+                    {handoverCandidates.length > 0 && (
+                      <button
+                        onClick={toggleAllHandover}
+                        className={`text-[11px] underline underline-offset-2 ${isDark ? 'text-slate-500 hover:text-slate-300' : 'text-gray-400 hover:text-gray-700'}`}
+                      >
+                        {handoverCandidates.every(t => !excludedIds.has(t.id)) ? 'Deselect all' : 'Select all'}
+                      </button>
+                    )}
+                  </div>
+
+                  {handoverCandidates.length === 0 ? (
+                    <div className={`rounded-lg border px-4 py-6 text-center text-xs ${isDark ? 'border-slate-800 text-slate-600' : 'border-gray-200 text-gray-400'}`}>
+                      No open or in-progress tickets to hand over.
+                    </div>
+                  ) : (
+                    <div className={`rounded-xl border overflow-hidden ${isDark ? 'border-slate-800' : 'border-gray-200'}`}>
+                      <div className="max-h-52 overflow-y-auto">
+                        {handoverCandidates.map((t, i) => {
+                          const isIncluded = !excludedIds.has(t.id);
+                          const ps = PRIORITY_STYLE[t.priority];
+                          return (
+                            <label
+                              key={t.id}
+                              className={`flex items-center gap-3 px-4 py-2.5 cursor-pointer transition-colors ${
+                                i > 0 ? (isDark ? 'border-t border-slate-800' : 'border-t border-gray-100') : ''
+                              } ${isIncluded
+                                  ? isDark ? 'bg-slate-950 hover:bg-slate-900' : 'bg-white hover:bg-gray-50'
+                                  : isDark ? 'bg-slate-900/40 hover:bg-slate-900' : 'bg-gray-50/60 hover:bg-gray-50'
+                              }`}
+                            >
+                              <input
+                                type="checkbox"
+                                checked={isIncluded}
+                                onChange={() => toggleHandoverTicket(t.id)}
+                                className="accent-sky-500 w-3.5 h-3.5 shrink-0"
+                              />
+                              <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded border shrink-0 ${isDark ? ps.badge : ps.badgeLight}`}>
+                                {t.priority.toUpperCase()}
+                              </span>
+                              <span className={`text-xs font-mono shrink-0 ${isDark ? 'text-slate-500' : 'text-gray-400'}`}>
+                                {t.ticket_number ?? t.id.slice(0, 8)}
+                              </span>
+                              <span className={`text-xs truncate flex-1 ${isIncluded ? (isDark ? 'text-slate-200' : 'text-gray-800') : (isDark ? 'text-slate-600 line-through' : 'text-gray-400 line-through')}`}>
+                                {t.title}
+                              </span>
+                            </label>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                <p className={`text-xs mb-4 leading-relaxed ${isDark ? 'text-slate-500' : 'text-gray-400'}`}>
+                  Checked tickets will be reassigned to the least-loaded {shiftMeta.label} shift technician. Unchecked tickets stay with their current assignee.
+                </p>
+
+                {handoverMutation.isError && (
+                  <p className={`text-xs mb-3 px-3 py-2 rounded-lg border ${isDark ? 'bg-red-500/10 border-red-500/20 text-red-400' : 'bg-red-50 border-red-200 text-red-600'}`}>
+                    {(handoverMutation.error as any)?.response?.data?.detail ?? 'Handover failed. Please try again.'}
+                  </p>
+                )}
+
+                <div className="flex gap-3">
+                  <button
+                    onClick={() => handoverMutation.mutate(Array.from(excludedIds))}
+                    disabled={handoverMutation.isPending || selectedCount === 0}
+                    className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-sky-600 hover:bg-sky-700 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm transition-colors"
+                  >
+                    <RefreshCw size={13} className={handoverMutation.isPending ? 'animate-spin' : ''} />
+                    {handoverMutation.isPending ? 'Transferring…' : `Transfer ${selectedCount} Ticket${selectedCount !== 1 ? 's' : ''}`}
+                  </button>
+                  <button
+                    onClick={() => setShowHandover(false)}
+                    className={`px-4 py-2.5 rounded-lg text-sm transition-colors ${isDark ? 'text-slate-400 hover:bg-slate-800' : 'text-gray-500 hover:bg-gray-100'}`}
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="flex items-center gap-3 mb-5">
+                  <div className={`p-2.5 rounded-xl ${isDark ? 'bg-green-500/10' : 'bg-green-50'}`}>
+                    <CheckCircle size={18} className="text-green-400" />
+                  </div>
+                  <div>
+                    <h2 className={`text-base font-medium ${isDark ? 'text-white' : 'text-gray-900'}`}>Handover Complete</h2>
+                    <p className={`text-xs ${isDark ? 'text-slate-400' : 'text-gray-500'}`}>{shiftMeta.label} shift has taken over from {prevShiftMeta.label}</p>
+                  </div>
+                </div>
+
+                <div className={`rounded-xl border p-4 mb-5 space-y-3 ${isDark ? 'bg-slate-950 border-slate-800' : 'bg-gray-50 border-gray-200'}`}>
+                  <div className="flex justify-between items-center">
+                    <span className={`text-xs ${isDark ? 'text-slate-400' : 'text-gray-500'}`}>Tickets transferred</span>
+                    <span className={`text-sm font-medium ${isDark ? 'text-white' : 'text-gray-900'}`}>{handoverResult.reassigned_count}</span>
+                  </div>
+                  <div className="flex justify-between items-center">
+                    <span className={`text-xs ${isDark ? 'text-slate-400' : 'text-gray-500'}`}>Now assigned to</span>
+                    <span className={`text-xs font-medium ${isDark ? 'text-sky-400' : 'text-sky-600'}`}>{handoverResult.new_assignee_full_name}</span>
+                  </div>
+                  <div className="flex justify-between items-center">
+                    <span className={`text-xs ${isDark ? 'text-slate-400' : 'text-gray-500'}`}>Shift</span>
+                    <span className={`text-xs font-medium px-2.5 py-0.5 rounded-full border ${isDark ? shiftMeta.badge : shiftMeta.badgeLight}`}>
+                      {handoverResult.current_shift.charAt(0).toUpperCase() + handoverResult.current_shift.slice(1)}
+                    </span>
+                  </div>
+                </div>
+
+                <button
+                  onClick={() => setShowHandover(false)}
+                  className={`w-full px-4 py-2.5 rounded-lg text-sm transition-colors ${isDark ? 'bg-slate-800 hover:bg-slate-700 text-white' : 'bg-gray-100 hover:bg-gray-200 text-gray-800'}`}
+                >
+                  Done
+                </button>
+              </>
+            )}
+          </div>
+        </div>,
+        document.body
+      )}
     </div>
   );
 };
@@ -508,18 +715,18 @@ const GlobalDashboard = () => {
   // ── Global aggregates ─────────────────────────────────────
   const totalOpen      = tickets.filter(t => t.status === 'Open').length;
   const totalCritical  = tickets.filter(t => t.priority === 'Critical' && t.status !== 'Resolved').length;
-  const totalEscalated = tickets.filter(t => t.escalationStatus === 'Escalated').length;
+  const totalEscalated = tickets.filter(t => t.escalationStatus === 'Escalated' && t.status !== 'Resolved').length;
 
   // ── Per-branch stats ──────────────────────────────────────
   const branchStats = (BRANCHES.filter(b => b !== 'Main Branch') as Branch[]).map(b => {
     const bt        = tickets.filter(t => t.branch === b);
     const open      = bt.filter(t => t.status === 'Open').length;
     const inProg    = bt.filter(t => t.status === 'In Progress').length;
-    const escalated = bt.filter(t => t.escalationStatus === 'Escalated').length;
+    const escalated = bt.filter(t => t.escalationStatus === 'Escalated' && t.status !== 'Resolved').length;
     const compliance= calcCompliance(bt);
     const avgRes    = avgResolutionDisplay(bt);
     const critical  = bt.filter(t => t.priority === 'Critical' && t.status !== 'Resolved').length;
-    const cfg       = BRANCH_CONFIG[b];
+    const cfg       = BRANCH_CONFIG[b] ?? { dotClass: 'bg-slate-500', color: '#64748b', label: b };
     return { b, bt, open, inProg, escalated, compliance, avgRes, critical, cfg };
   });
 
@@ -823,9 +1030,9 @@ const GlobalDashboard = () => {
             </span>
           </div>
           <div className={`divide-y ${isDark ? 'divide-orange-500/10' : 'divide-orange-100'}`}>
-            {tickets.filter(t => t.escalationStatus === 'Escalated').map(t => {
+            {tickets.filter(t => t.escalationStatus === 'Escalated' && t.status !== 'Resolved').map(t => {
               const ps  = PRIORITY_STYLE[t.priority];
-              const cfg = BRANCH_CONFIG[t.branch];
+              const cfg = BRANCH_CONFIG[t.branch] ?? { dotClass: 'bg-slate-500', color: '#64748b', label: t.branch };
               return (
                 <div key={t.id} onClick={() => navigate(`/tickets/${t.id}`)} className={`flex flex-wrap items-center gap-4 px-5 py-4 cursor-pointer ${isDark ? 'hover:bg-orange-500/5' : 'hover:bg-orange-100/30'} transition-colors`}>
                   <span className={`w-2.5 h-2.5 rounded-full shrink-0 ${cfg.dotClass}`} title={t.branch} />
@@ -860,6 +1067,7 @@ export const Dashboard = () => {
 
   const isGlobal =
     currentUser.role === 'Main Branch IT Manager' ||
+    currentUser.role === 'Main Branch IT Supervisor' ||
     (currentUser.role === 'Branch IT Supervisor' && currentUser.branch === 'Main Branch');
   return isGlobal ? <GlobalDashboard /> : <BranchDashboard />;
 };

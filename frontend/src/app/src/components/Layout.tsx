@@ -3,17 +3,18 @@ import { Outlet, NavLink, useNavigate } from 'react-router';
 import { useTickets } from '../context/TicketContext';
 import { useTheme } from '../context/ThemeContext';
 import { useAuth } from '../context/AuthContext';
-import { LayoutDashboard, Ticket as TicketIcon, PlusCircle, Headphones, Users, Sun, Moon, Settings, Shield, BarChart3, BookOpen, User, UserCog, UserCheck, LogOut, Building2, Bell } from 'lucide-react';
+import { LayoutDashboard, Ticket as TicketIcon, PlusCircle, Users, Sun, Moon, Settings, Shield, BarChart3, BookOpen, User, UserCog, UserCheck, LogOut, Building2, Bell, UserCircle } from 'lucide-react';
 import { Toaster } from 'sonner@2.0.3';
-import { Role, BRANCH_CONFIG, getActiveShift, DEPARTMENT_LABELS } from '../types';
+import { Role, BRANCH_CONFIG, getActiveShift } from '../types';
 import { NotificationBell } from './NotificationBell';
 import { useNotifications } from '../context/NotificationContext';
 
 const roleIcons: Record<Role, React.ComponentType<{ size?: number; className?: string }>> = {
-  'Agent (end-user)':        User,
-  'Branch IT Technician':    UserCog,
-  'Branch IT Supervisor':    UserCheck,
-  'Main Branch IT Manager':  Settings,
+  'Agent (end-user)':           User,
+  'Branch IT Technician':       UserCog,
+  'Branch IT Supervisor':       UserCheck,
+  'Main Branch IT Supervisor':  Shield,
+  'Main Branch IT Manager':     Settings,
 };
 
 const shiftColors: Record<string, string> = {
@@ -32,16 +33,19 @@ export const Layout = () => {
   const isDark = theme === 'dark';
   const role = currentUser.role;
   const branch = currentUser.branch;
-  const branchCfg = BRANCH_CONFIG[branch];
+  const branchCfg = BRANCH_CONFIG[branch] ?? { dotClass: 'bg-slate-500', color: '#64748b', label: branch };
   const activeShift = getActiveShift();
 
   const isStaff = role !== 'Agent (end-user)';
-  const isManagerOrAdmin = role === 'Branch IT Supervisor' || role === 'Main Branch IT Manager';
   const isSysAdmin = role === 'Main Branch IT Manager';
-  const isMainBranchManager = (role === 'Branch IT Supervisor' || role === 'Main Branch IT Manager') && branch === 'Main Branch';
+  const isMainSupervisor = role === 'Main Branch IT Supervisor';
+  // Workflow managers: branch supervisors + main IT supervisor (not system admin)
+  const isManagerOrAdmin = role === 'Branch IT Supervisor' || isMainSupervisor;
+  // Global badge: both main supervisor and system admin operate across all branches
+  const isMainBranchLevel = isMainSupervisor || isSysAdmin;
 
   // Unread count scoped to this user's branch (or global)
-  const isGlobal = isSysAdmin || isMainBranchManager;
+  const isGlobal = isMainBranchLevel;
   const unreadCount = notifications.filter(n =>
     (!n.read) && (isGlobal || n.branch === branch)
   ).length;
@@ -56,11 +60,7 @@ export const Layout = () => {
         {/* Sidebar Header */}
         <div className="p-5 border-b border-slate-800">
           <div className="flex items-center gap-3 mb-3">
-            <Headphones className="text-blue-400 shrink-0" size={26} />
-            <div>
-              <h1 className="text-base tracking-tight text-white leading-tight">BPO IT Helpdesk</h1>
-              <p className="text-xs text-slate-500 leading-tight">24/7 Operations Center</p>
-            </div>
+            <img src="/gs-logo.svg" alt="Global Strategic" className="h-8 w-auto object-contain brightness-0 invert" />
           </div>
           {/* Branch Label with Colored Dot */}
           <div className="flex items-center gap-2 mt-2 px-2 py-1.5 rounded-md bg-slate-800/60 border border-slate-700/60">
@@ -69,7 +69,7 @@ export const Layout = () => {
               <Building2 size={12} className="text-slate-500 shrink-0" />
               <span className="text-xs text-slate-300 truncate">{branchCfg.label}</span>
             </div>
-            {(isMainBranchManager || isSysAdmin) && (
+            {(isMainBranchLevel || isSysAdmin) && (
               <span className="ml-auto text-[10px] px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-400 shrink-0">Global</span>
             )}
           </div>
@@ -88,7 +88,7 @@ export const Layout = () => {
               }
             >
               <LayoutDashboard size={18} />
-              <span>{isMainBranchManager ? 'Global Dashboard' : 'Dashboard'}</span>
+              <span>{isMainBranchLevel ? 'Global Dashboard' : 'Dashboard'}</span>
             </NavLink>
           )}
 
@@ -156,6 +156,19 @@ export const Layout = () => {
             <span>Knowledge Base</span>
           </NavLink>
 
+          {/* Account Settings - all roles */}
+          <NavLink
+            to="/settings"
+            className={({ isActive }) =>
+              `flex items-center gap-3 px-4 py-2.5 rounded-md transition-colors text-sm ${
+                isActive ? 'bg-blue-600 text-white' : 'text-slate-300 hover:bg-slate-800 hover:text-white'
+              }`
+            }
+          >
+            <UserCircle size={18} />
+            <span>Account Settings</span>
+          </NavLink>
+
           {/* Team Management - IT Manager & Admin */}
           {isManagerOrAdmin && (
             <NavLink
@@ -202,20 +215,21 @@ export const Layout = () => {
           )}
         </nav>
 
-        {/* User Info */}
+        {/* User Info — click to open Account Settings */}
         <div className="p-4 border-t border-slate-800">
-          <div className={`flex items-center gap-3 px-3 py-2.5 rounded-md bg-slate-950/50`}>
+          <NavLink
+            to="/settings"
+            className={({ isActive }) =>
+              `flex items-center gap-3 px-3 py-2.5 rounded-md transition-colors ${isActive ? 'bg-blue-600/20' : 'bg-slate-950/50 hover:bg-slate-800'}`
+            }
+          >
             {React.createElement(roleIcons[role], { size: 18, className: 'text-blue-400 shrink-0' })}
             <div className="flex-1 min-w-0">
               <p className="text-sm text-white truncate">{currentUser.name}</p>
               <p className="text-xs text-slate-400 truncate">{role}</p>
-              {currentUser.department && (
-                <p className="text-xs text-slate-500 truncate">
-                  {DEPARTMENT_LABELS[currentUser.department as keyof typeof DEPARTMENT_LABELS] ?? currentUser.department}
-                </p>
-              )}
             </div>
-          </div>
+            <UserCircle size={14} className="text-slate-600 shrink-0" />
+          </NavLink>
         </div>
       </aside>
 

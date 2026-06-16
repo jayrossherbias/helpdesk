@@ -9,6 +9,7 @@ import {
   Phone, Monitor, HardDrive, Wifi, KeyRound,
 } from 'lucide-react';
 import { HSelect } from '../components/HSelect';
+import { ConfirmModal } from '../components/ConfirmModal';
 
 // ── Category metadata ─────────────────────────────────────────
 const CATEGORY_META: Record<Category, { description: string; icon: React.ComponentType<{ size?: number; className?: string }> }> = {
@@ -71,6 +72,7 @@ export const CreateTicket = () => {
   const savedAgentsRef = useRef<number>(1);
 
   const [urgency, setUrgency] = useState<Urgency>('minor_issue');
+  const [showSubmitConfirm, setShowSubmitConfirm] = useState(false);
 
   // Priority: auto-calculated, but user may override
   const [priorityOverride, setPriorityOverride] = useState<Priority | null>(null);
@@ -84,9 +86,14 @@ export const CreateTicket = () => {
     }
   }, [agentsAffected]);
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!title) return;
+    setShowSubmitConfirm(true);
+  };
+
+  const doSubmit = async () => {
+    setShowSubmitConfirm(false);
     const ok = await createTicket(
       title, description, category, agentsAffected, shift,
       floor, isFloorWide, urgency, priorityOverride ?? undefined,
@@ -306,8 +313,7 @@ export const CreateTicket = () => {
                 <AlertTriangle size={14} className={isFloorWide ? 'text-orange-400' : isDark ? 'text-slate-500' : 'text-gray-400'} />
                 Is this a Floor-Wide Incident?
               </div>
-              <p className={`text-xs mt-0.5 flex items-center gap-1.5 ${isDark ? 'text-slate-500' : 'text-gray-400'}`}>
-                {isFloorWide && <AlertTriangle size={11} className="text-orange-400 shrink-0" />}
+              <p className={`text-xs mt-0.5 ${isDark ? 'text-slate-500' : 'text-gray-400'}`}>
                 {isFloorWide
                   ? 'Flagged as bulk incident — affecting an entire floor or campaign team.'
                   : 'Enable if this issue affects an entire floor, building, or multiple teams simultaneously.'}
@@ -374,6 +380,25 @@ export const CreateTicket = () => {
           </div>
         </div>
       </form>
+
+      <ConfirmModal
+        open={showSubmitConfirm}
+        title="Submit this ticket?"
+        isDark={isDark}
+        confirmLabel="Yes, Submit"
+        onConfirm={doSubmit}
+        onCancel={() => setShowSubmitConfirm(false)}
+        body={
+          <div className="space-y-2">
+            <p><span className={isDark ? 'text-slate-400' : 'text-gray-500'}>Title:</span> {title}</p>
+            <p><span className={isDark ? 'text-slate-400' : 'text-gray-500'}>Category:</span> {category}</p>
+            <p><span className={isDark ? 'text-slate-400' : 'text-gray-500'}>Priority:</span> {effectivePriority}</p>
+            <p><span className={isDark ? 'text-slate-400' : 'text-gray-500'}>Agents affected:</span> {agentsAffected}</p>
+            <p><span className={isDark ? 'text-slate-400' : 'text-gray-500'}>Shift:</span> {shift}</p>
+            {isFloorWide && <p className="text-orange-400">⚠ Floor-wide incident</p>}
+          </div>
+        }
+      />
     </div>
   );
 };

@@ -22,6 +22,7 @@ class UserProfile(AbstractUser):
         AGENT = 'agent', 'Agent'
         BRANCH_TECHNICIAN = 'branch_technician', 'Branch Technician'
         BRANCH_SUPERVISOR = 'branch_supervisor', 'Branch Supervisor'
+        MAIN_IT_SUPERVISOR = 'main_it_supervisor', 'Main IT Supervisor'
         MAIN_IT_MANAGER = 'main_it_manager', 'Main IT Manager'
 
     class Shift(models.TextChoices):
@@ -30,21 +31,27 @@ class UserProfile(AbstractUser):
         NIGHT = 'night', 'Night (10PM–6AM)'
 
     class Department(models.TextChoices):
-        SALES = 'sales', 'Sales'
+        IT_DEPARTMENT    = 'it_department',    'IT Department'
+        SALES            = 'sales',            'Sales'
         CUSTOMER_SERVICE = 'customer_service', 'Customer Service'
-        COLLECTIONS = 'collections', 'Collections'
+        COLLECTIONS      = 'collections',      'Collections'
         TECHNICAL_SUPPORT = 'technical_support', 'Technical Support'
         QUALITY_ASSURANCE = 'quality_assurance', 'Quality Assurance'
-        BACK_OFFICE = 'back_office', 'Back Office'
+        BACK_OFFICE      = 'back_office',      'Back Office'
 
     DEPARTMENT_CODES = {
-        'sales': 'SLS',
+        'it_department':    'IT',
+        'sales':            'SLS',
         'customer_service': 'CS',
-        'collections': 'COL',
+        'collections':      'COL',
         'technical_support': 'TS',
         'quality_assurance': 'QA',
-        'back_office': 'BO',
+        'back_office':      'BO',
     }
+
+    IT_ROLES = {'branch_technician', 'branch_supervisor', 'main_it_supervisor', 'main_it_manager'}
+
+    email = models.EmailField(unique=True)
 
     branch = models.ForeignKey(
         Branch,

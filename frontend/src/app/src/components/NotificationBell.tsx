@@ -47,7 +47,7 @@ const NotificationItem: React.FC<{
   const Icon   = meta.icon;
   const bgCls  = isDark ? meta.darkBg   : meta.lightBg;
   const txtCls = isDark ? meta.darkText : meta.lightText;
-  const cfg    = BRANCH_CONFIG[n.branch as Branch];
+  const cfg    = BRANCH_CONFIG[n.branch as Branch] ?? { dotClass: 'bg-slate-500', color: '#64748b', label: n.branch };
 
   return (
     <div
@@ -60,7 +60,7 @@ const NotificationItem: React.FC<{
     >
       {/* Unread dot */}
       {!n.read && (
-        <span className="absolute left-1.5 top-1/2 -translate-y-1/2 w-1.5 h-1.5 rounded-full bg-blue-500" />
+        <span className="absolute right-4 top-1/2 -translate-y-1/2 w-1.5 h-1.5 rounded-full bg-blue-500" />
       )}
 
       {/* Type icon */}

@@ -13,6 +13,7 @@ export interface BranchRef {
 }
 
 export type Department =
+  | 'it_department'
   | 'sales'
   | 'customer_service'
   | 'collections'
@@ -21,17 +22,19 @@ export type Department =
   | 'back_office'
 
 export const DEPARTMENT_LABELS: Record<Department, string> = {
-  sales: 'Sales',
+  it_department:    'IT Department',
+  sales:            'Sales',
   customer_service: 'Customer Service',
-  collections: 'Collections',
+  collections:      'Collections',
   technical_support: 'Technical Support',
   quality_assurance: 'Quality Assurance',
-  back_office: 'Back Office',
+  back_office:      'Back Office',
 }
 
 export interface UserRef {
   id: number
   username: string
+  display_name?: string
   email?: string
 }
 
@@ -92,6 +95,8 @@ export interface Ticket {
   logs?: TicketLogEntry[]
   sla_status: string
   sla_deadline: string | null
+  resolved_at: string | null
+  resolution_notes: string
   major_incident: string | null
   related_to: RelatedTicketRef | null
   follow_ups?: RelatedTicketRef[]

@@ -1,36 +1,71 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useAuth, Account } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
-import { Role, Branch, BRANCHES, BRANCH_CONFIG, DEPARTMENT_LABELS } from '../types';
+import { Role, Branch, BRANCHES, BRANCH_CONFIG } from '../types';
 import { UserPlus, Shield, ShieldOff, Trash2, KeyRound, Pencil, X, Check, Search, Users } from 'lucide-react';
 import { toast } from 'sonner@2.0.3';
 import { HSelect } from '../components/HSelect';
+import { getBranches, createUser, patchUser } from '../../../api/accounts';
+import type { Branch as ApiBranch } from '../../../api/auth';
 
 const roleBadgeColors: Record<Role, { dark: string; light: string }> = {
-  'Agent (end-user)':        { dark: 'bg-slate-500/10 text-slate-400',   light: 'bg-slate-100 text-slate-600' },
-  'Branch IT Technician':    { dark: 'bg-green-500/10 text-green-400',   light: 'bg-green-100 text-green-700' },
-  'Branch IT Supervisor':    { dark: 'bg-purple-500/10 text-purple-400', light: 'bg-purple-100 text-purple-700' },
-  'Main Branch IT Manager':  { dark: 'bg-red-500/10 text-red-400',       light: 'bg-red-100 text-red-700' },
+  'Agent (end-user)':           { dark: 'bg-slate-500/10 text-slate-400',   light: 'bg-slate-100 text-slate-600' },
+  'Branch IT Technician':       { dark: 'bg-green-500/10 text-green-400',   light: 'bg-green-100 text-green-700' },
+  'Branch IT Supervisor':       { dark: 'bg-purple-500/10 text-purple-400', light: 'bg-purple-100 text-purple-700' },
+  'Main Branch IT Supervisor':  { dark: 'bg-blue-500/10 text-blue-400',     light: 'bg-blue-100 text-blue-700' },
+  'Main Branch IT Manager':     { dark: 'bg-red-500/10 text-red-400',       light: 'bg-red-100 text-red-700' },
 };
 
-const roles: Role[] = ['Agent (end-user)', 'Branch IT Technician', 'Branch IT Supervisor', 'Main Branch IT Manager'];
+const roles: Role[] = [
+  'Agent (end-user)',
+  'Branch IT Technician',
+  'Branch IT Supervisor',
+  'Main Branch IT Supervisor',
+  'Main Branch IT Manager',
+];
+
+const ROLE_MAP: Record<Role, string> = {
+  'Agent (end-user)':          'agent',
+  'Branch IT Technician':      'branch_technician',
+  'Branch IT Supervisor':      'branch_supervisor',
+  'Main Branch IT Supervisor': 'main_it_supervisor',
+  'Main Branch IT Manager':    'main_it_manager',
+};
+
+const SHIFT_OPTIONS = [
+  { value: '',          label: 'No shift' },
+  { value: 'morning',   label: 'Morning (6AM–2PM)' },
+  { value: 'afternoon', label: 'Afternoon (2PM–10PM)' },
+  { value: 'night',     label: 'Night (10PM–6AM)' },
+];
 
 export const UserManagement = () => {
-  const { accounts, currentAccount, addAccount, updateAccount, resetPassword, deleteAccount } = useAuth();
+  const { accounts, currentAccount, refreshAccounts, addAccount, updateAccount, resetPassword, deleteAccount } = useAuth();
   const { theme } = useTheme();
   const isDark = theme === 'dark';
 
+  const [apiBranches, setApiBranches] = useState<ApiBranch[]>([]);
   const [search, setSearch] = useState('');
   const [filterRole, setFilterRole] = useState<string>('All');
   const [filterBranch, setFilterBranch] = useState<string>('All');
   const [showAddModal, setShowAddModal] = useState(false);
+  const [isCreating, setIsCreating] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
-  const [editForm, setEditForm] = useState<{ name: string; email: string; role: Role; branch: Branch }>({
-    name: '', email: '', role: 'Agent (end-user)', branch: 'Cebu Branch',
+  const [editForm, setEditForm] = useState<{ fullName: string; email: string; role: Role; branch: Branch }>({
+    fullName: '', email: '', role: 'Agent (end-user)', branch: 'Victorias Branch',
   });
   const [resetId, setResetId] = useState<string | null>(null);
   const [newPassword, setNewPassword] = useState('');
-  const [addForm, setAddForm] = useState({ name: '', email: '', password: '', role: 'Agent (end-user)' as Role, branch: 'Cebu Branch' as Branch });
+  const [addForm, setAddForm] = useState({
+    name: '', email: '', password: '',
+    role: 'Agent (end-user)' as Role,
+    branch: 'Victorias Branch' as Branch,
+    shift: '',
+  });
+
+  useEffect(() => {
+    getBranches().then(setApiBranches).catch(() => {});
+  }, []);
 
   const filtered = accounts.filter(a => {
     const matchSearch = a.name.toLowerCase().includes(search.toLowerCase()) || a.email.toLowerCase().includes(search.toLowerCase());
@@ -39,30 +74,62 @@ export const UserManagement = () => {
     return matchSearch && matchRole && matchBranch;
   });
 
-  const handleAdd = () => {
+  const handleAdd = async () => {
     if (!addForm.name || !addForm.email || !addForm.password) {
       toast.error('All fields are required.');
       return;
     }
-    if (accounts.some(a => a.email === addForm.email)) {
-      toast.error('An account with this email already exists.');
+    const branchObj = apiBranches.find(b => b.name === addForm.branch);
+    if (!branchObj) {
+      toast.error('Branch not found. Please try again.');
       return;
     }
-    addAccount({ ...addForm, active: true });
-    toast.success(`Account for ${addForm.name} created.`);
-    setAddForm({ name: '', email: '', password: '', role: 'Agent (end-user)', branch: 'Cebu Branch' });
-    setShowAddModal(false);
+    setIsCreating(true);
+    try {
+      await createUser({
+        first_name: addForm.name,
+        email:      addForm.email,
+        password:   addForm.password,
+        role:       ROLE_MAP[addForm.role],
+        shift:      addForm.shift || null,
+        branch:     branchObj.id,
+        is_active:  true,
+      });
+      toast.success(`Account for ${addForm.name} created.`);
+      setAddForm({ name: '', email: '', password: '', role: 'Agent (end-user)', branch: 'Victorias Branch', shift: '' });
+      setShowAddModal(false);
+      refreshAccounts();
+    } catch (err: any) {
+      const msg = err?.response?.data?.email?.[0]
+        ?? err?.response?.data?.username?.[0]
+        ?? err?.response?.data?.detail
+        ?? 'Failed to create account.';
+      toast.error(msg);
+    } finally {
+      setIsCreating(false);
+    }
   };
 
   const startEdit = (a: Account) => {
     setEditingId(a.id);
-    setEditForm({ name: a.name, email: a.email, role: a.role, branch: a.branch });
+    setEditForm({ fullName: a.name, email: a.email, role: a.role, branch: a.branch });
   };
 
-  const saveEdit = (id: string) => {
-    updateAccount(id, editForm);
-    toast.success('Account updated.');
-    setEditingId(null);
+  const saveEdit = async (id: string) => {
+    const [firstName, ...rest] = editForm.fullName.trim().split(' ');
+    try {
+      await patchUser(id, {
+        first_name: firstName,
+        last_name:  rest.join(' '),
+        email:      editForm.email,
+        role:       ROLE_MAP[editForm.role],
+      });
+      toast.success('Account updated.');
+      refreshAccounts();
+      setEditingId(null);
+    } catch (err: any) {
+      toast.error(err?.response?.data?.email?.[0] ?? err?.response?.data?.detail ?? 'Failed to update account.');
+    }
   };
 
   const handleResetPassword = (id: string) => {
@@ -85,13 +152,18 @@ export const UserManagement = () => {
     toast.success(`Account ${a.name} deleted.`);
   };
 
-  const toggleActive = (a: Account) => {
+  const toggleActive = async (a: Account) => {
     if (a.id === currentAccount?.id) {
       toast.error("You can't deactivate your own account.");
       return;
     }
-    updateAccount(a.id, { active: !a.active });
-    toast.success(`Account ${a.active ? 'deactivated' : 'activated'}.`);
+    try {
+      await patchUser(a.id, { is_active: !a.active });
+      toast.success(`Account ${a.active ? 'deactivated' : 'activated'}.`);
+      refreshAccounts();
+    } catch {
+      toast.error('Failed to update account status.');
+    }
   };
 
   const cardClass = `rounded-xl border transition-colors duration-200 ${isDark ? 'bg-slate-900 border-slate-800' : 'bg-white border-gray-200'}`;
@@ -146,19 +218,19 @@ export const UserManagement = () => {
           <table className="w-full">
             <thead>
               <tr className={isDark ? 'bg-slate-800/50' : 'bg-gray-50'}>
-                {['Name', 'Email', 'Branch', 'Role', 'Department', 'Status', 'Created', 'Actions'].map(h => (
+                {['Name', 'Email', 'Branch', 'Role', 'Status', 'Created', 'Actions'].map(h => (
                   <th key={h} className={`px-5 py-3 text-left text-xs uppercase tracking-wider ${isDark ? 'text-slate-400' : 'text-gray-500'}`}>{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody className={`divide-y ${isDark ? 'divide-slate-800' : 'divide-gray-100'}`}>
               {filtered.map(a => {
-                const branchCfg = BRANCH_CONFIG[a.branch];
+                const branchCfg = BRANCH_CONFIG[a.branch] ?? { dotClass: 'bg-slate-500', color: '#64748b', label: a.branch };
                 return (
                   <tr key={a.id} className={`transition-colors ${isDark ? 'hover:bg-slate-800/30' : 'hover:bg-gray-50'}`}>
                     <td className="px-5 py-4">
                       {editingId === a.id ? (
-                        <input value={editForm.name} onChange={e => setEditForm({ ...editForm, name: e.target.value })} className={`px-2 py-1 rounded text-sm border outline-none ${isDark ? 'bg-slate-950 border-slate-700 text-white' : 'bg-white border-gray-300'}`} />
+                        <input value={editForm.fullName} onChange={e => setEditForm({ ...editForm, fullName: e.target.value })} className={`px-2 py-1 rounded text-sm border outline-none ${isDark ? 'bg-slate-950 border-slate-700 text-white' : 'bg-white border-gray-300'}`} />
                       ) : (
                         <div className="flex items-center gap-2">
                           <div className={`w-7 h-7 rounded-full flex items-center justify-center text-xs shrink-0 ${isDark ? 'bg-slate-800 text-slate-300' : 'bg-gray-200 text-gray-600'}`}>
@@ -202,12 +274,6 @@ export const UserManagement = () => {
                       ) : (
                         <span className={`text-xs px-2.5 py-1 rounded-full ${isDark ? roleBadgeColors[a.role].dark : roleBadgeColors[a.role].light}`}>{a.role}</span>
                       )}
-                    </td>
-                    <td className={`px-5 py-4 text-xs ${isDark ? 'text-slate-400' : 'text-gray-500'}`}>
-                      {a.department
-                        ? (DEPARTMENT_LABELS[a.department as keyof typeof DEPARTMENT_LABELS] ?? a.department)
-                        : <span className={isDark ? 'text-slate-700' : 'text-gray-300'}>—</span>
-                      }
                     </td>
                     <td className="px-5 py-4">
                       <span className={`text-xs px-2.5 py-1 rounded-full ${a.active ? (isDark ? 'bg-green-500/10 text-green-400' : 'bg-green-100 text-green-700') : (isDark ? 'bg-red-500/10 text-red-400' : 'bg-red-100 text-red-700')}`}>
@@ -311,10 +377,19 @@ export const UserManagement = () => {
                   />
                 </div>
               </div>
+              <div>
+                <label className={`block text-sm mb-1 ${isDark ? 'text-slate-300' : 'text-gray-700'}`}>Shift</label>
+                <HSelect
+                  value={addForm.shift}
+                  onChange={v => setAddForm({ ...addForm, shift: v })}
+                  options={SHIFT_OPTIONS}
+                  isDark={isDark}
+                />
+              </div>
             </div>
             <div className="flex gap-3 justify-end mt-6">
               <button onClick={() => setShowAddModal(false)} className={`px-4 py-2 rounded-lg text-sm ${isDark ? 'text-slate-300 hover:bg-slate-800' : 'text-gray-600 hover:bg-gray-100'}`}>Cancel</button>
-              <button onClick={handleAdd} className="px-4 py-2 rounded-lg text-sm bg-blue-600 hover:bg-blue-700 text-white">Create Account</button>
+              <button onClick={handleAdd} disabled={isCreating} className="px-4 py-2 rounded-lg text-sm bg-blue-600 hover:bg-blue-700 disabled:opacity-60 text-white">{isCreating ? 'Creating…' : 'Create Account'}</button>
             </div>
           </div>
         </div>

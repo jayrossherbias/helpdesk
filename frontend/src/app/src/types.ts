@@ -6,8 +6,9 @@ export type Category =
   | 'Workstation & Peripherals'
   | 'Network & Connectivity'
   | 'Account & Access Management';
-export type Role = 'Agent (end-user)' | 'Branch IT Technician' | 'Branch IT Supervisor' | 'Main Branch IT Manager';
+export type Role = 'Agent (end-user)' | 'Branch IT Technician' | 'Branch IT Supervisor' | 'Main Branch IT Supervisor' | 'Main Branch IT Manager';
 export type Department =
+  | 'it_department'
   | 'sales'
   | 'customer_service'
   | 'collections'
@@ -16,25 +17,17 @@ export type Department =
   | 'back_office';
 export type Branch =
   | 'Main Branch'
-  | 'Cebu Branch'
-  | 'Davao Branch'
-  | 'Manila Branch'
-  | 'Makati Branch'
-  | 'BGC Branch';
+  | 'Victorias Branch';
 export type Shift = 'Morning' | 'Afternoon' | 'Night';
 export type EscalationStatus = 'Not Escalated' | 'Escalated' | 'Resolved by Main Branch';
 
 export const BRANCHES: Branch[] = [
-  'Main Branch', 'Cebu Branch', 'Davao Branch', 'Manila Branch', 'Makati Branch', 'BGC Branch',
+  'Main Branch', 'Victorias Branch',
 ];
 
 export const BRANCH_CONFIG: Record<Branch, { dotClass: string; color: string; label: string }> = {
-  'Main Branch':   { dotClass: 'bg-blue-500',    color: '#3b82f6', label: 'Main Branch' },
-  'Cebu Branch':   { dotClass: 'bg-emerald-500', color: '#10b981', label: 'Cebu Branch' },
-  'Davao Branch':  { dotClass: 'bg-orange-500',  color: '#f97316', label: 'Davao Branch' },
-  'Manila Branch': { dotClass: 'bg-purple-500',  color: '#a855f7', label: 'Manila Branch' },
-  'Makati Branch': { dotClass: 'bg-rose-500',    color: '#f43f5e', label: 'Makati Branch' },
-  'BGC Branch':    { dotClass: 'bg-cyan-500',    color: '#06b6d4', label: 'BGC Branch' },
+  'Main Branch':      { dotClass: 'bg-blue-500',    color: '#3b82f6', label: 'Main Branch' },
+  'Victorias Branch': { dotClass: 'bg-emerald-500', color: '#10b981', label: 'Victorias Branch' },
 };
 
 export const BPO_CATEGORIES: Category[] = [
@@ -80,21 +73,23 @@ export const URGENCY_META: Record<Urgency, { label: string; short: string; color
 };
 
 export const DEPARTMENT_LABELS: Record<Department, string> = {
-  sales: 'Sales',
+  it_department:    'IT Department',
+  sales:            'Sales',
   customer_service: 'Customer Service',
-  collections: 'Collections',
+  collections:      'Collections',
   technical_support: 'Technical Support',
   quality_assurance: 'Quality Assurance',
-  back_office: 'Back Office',
+  back_office:      'Back Office',
 };
 
 export const DEPARTMENT_CODES: Record<Department, string> = {
-  sales: 'SLS',
+  it_department:    'IT',
+  sales:            'SLS',
   customer_service: 'CS',
-  collections: 'COL',
+  collections:      'COL',
   technical_support: 'TS',
   quality_assurance: 'QA',
-  back_office: 'BO',
+  back_office:      'BO',
 };
 
 export interface RelatedTicketRef {
@@ -127,8 +122,11 @@ export interface Ticket {
   escalationStatus: EscalationStatus;
   escalatedAt?: string;
   escalationNotes?: string;
+  resolutionNotes: string;
+  slaStatus: string;
   createdAt: string;
   updatedAt: string;
+  resolvedAt: string | null;
   history: TicketHistory[];
 }
 

@@ -1,6 +1,6 @@
-import React, { createContext, useContext, useState } from 'react';
+import React, { createContext, useContext, useState, useEffect } from 'react';
 import { Role, Branch } from '../types';
-import { login as apiLogin, logout as apiLogout } from '../../../api/auth';
+import { login as apiLogin, logout as apiLogout, restoreSession, getMe, googleLogin as apiGoogleLogin } from '../../../api/auth';
 import type { UserProfile } from '../../../api/auth';
 import { getUsers } from '../../../api/accounts';
 import { toast } from 'sonner';
@@ -19,10 +19,14 @@ export interface Account {
 
 interface AuthContextType {
   isAuthenticated: boolean;
+  isLoading: boolean;
   currentAccount: Account | null;
   accounts: Account[];
-  login: (username: string, password: string, branch?: Branch | 'All') => Promise<string | null>;
+  login: (email: string, password: string, branch?: Branch | 'All') => Promise<string | null>;
+  loginWithGoogle: (credential: string) => Promise<string | null>;
   logout: () => void;
+  refreshAccounts: () => void;
+  refreshMe: () => Promise<void>;
   addAccount: (data: Omit<Account, 'id' | 'createdAt'>) => void;
   updateAccount: (id: string, data: Partial<Pick<Account, 'name' | 'email' | 'role' | 'branch' | 'active'>>) => void;
   resetPassword: (id: string, newPassword: string) => void;
@@ -30,16 +34,17 @@ interface AuthContextType {
 }
 
 const API_ROLE_TO_FIGMA: Record<string, Role> = {
-  agent:              'Agent (end-user)',
-  branch_technician:  'Branch IT Technician',
-  branch_supervisor:  'Branch IT Supervisor',
-  main_it_manager:    'Main Branch IT Manager',
+  agent:               'Agent (end-user)',
+  branch_technician:   'Branch IT Technician',
+  branch_supervisor:   'Branch IT Supervisor',
+  main_it_supervisor:  'Main Branch IT Supervisor',
+  main_it_manager:     'Main Branch IT Manager',
 };
 
 function mapProfileToAccount(profile: UserProfile): Account {
   return {
     id:         String(profile.id),
-    name:       profile.username,
+    name:       [profile.first_name, profile.last_name].filter(Boolean).join(' ') || profile.email,
     email:      profile.email,
     password:   '',
     role:       API_ROLE_TO_FIGMA[profile.role] ?? 'Agent (end-user)',
@@ -55,20 +60,44 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [currentAccount, setCurrentAccount] = useState<Account | null>(null);
   const [accounts, setAccounts] = useState<Account[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
 
-  const login = async (username: string, password: string, _branch?: Branch | 'All'): Promise<string | null> => {
+  useEffect(() => {
+    restoreSession()
+      .then(profile => {
+        if (profile) {
+          setCurrentAccount(mapProfileToAccount(profile));
+          getUsers().then(users => setAccounts(users.map(mapProfileToAccount))).catch(() => {});
+        }
+      })
+      .finally(() => setIsLoading(false));
+  }, []);
+
+  const login = async (email: string, password: string, _branch?: Branch | 'All'): Promise<string | null> => {
     try {
-      const profile = await apiLogin(username, password);
+      const profile = await apiLogin(email, password);
       const account = mapProfileToAccount(profile);
       setCurrentAccount(account);
-      // Load full user list in the background for UserManagement
       getUsers().then(users => setAccounts(users.map(mapProfileToAccount))).catch(() => {});
       return null;
     } catch (err: any) {
-      const detail = err?.response?.data?.detail;
-      if (detail) return detail;
-      if (err?.response?.status === 401) return 'Invalid username or password.';
+      const data = err?.response?.data;
+      const msg = data?.detail ?? data?.non_field_errors?.[0] ?? data?.email?.[0];
+      if (msg) return msg;
       return 'Login failed. Please try again.';
+    }
+  };
+
+  const loginWithGoogle = async (credential: string): Promise<string | null> => {
+    try {
+      const profile = await apiGoogleLogin(credential);
+      const account = mapProfileToAccount(profile);
+      setCurrentAccount(account);
+      getUsers().then(users => setAccounts(users.map(mapProfileToAccount))).catch(() => {});
+      return null;
+    } catch (err: any) {
+      const data = err?.response?.data;
+      return data?.detail ?? 'Google sign-in failed. Please try again.';
     }
   };
 
@@ -76,6 +105,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     apiLogout().catch(() => {});
     setCurrentAccount(null);
     setAccounts([]);
+  };
+
+  const refreshAccounts = () => {
+    getUsers().then(users => setAccounts(users.map(mapProfileToAccount))).catch(() => {});
+  };
+
+  const refreshMe = async () => {
+    try {
+      const profile = await getMe();
+      setCurrentAccount(mapProfileToAccount(profile));
+    } catch {}
   };
 
   const addAccount = (data: Omit<Account, 'id' | 'createdAt'>) => {
@@ -107,10 +147,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   return (
     <AuthContext.Provider value={{
       isAuthenticated: !!currentAccount,
+      isLoading,
       currentAccount,
       accounts,
       login,
+      loginWithGoogle,
       logout,
+      refreshAccounts,
+      refreshMe,
       addAccount,
       updateAccount,
       resetPassword,

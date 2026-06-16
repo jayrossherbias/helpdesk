@@ -16,3 +16,9 @@ staticfiles/
 # IDE
 .vscode/
 *.swp
+
+# Claude / MCP
+.claude/
+.agents/
+.mcp.json
+skills-lock.json

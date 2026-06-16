@@ -96,6 +96,10 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 AUTH_USER_MODEL = 'accounts.UserProfile'
 
+AUTHENTICATION_BACKENDS = [
+    'apps.accounts.backends.EmailAuthBackend',
+]
+
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': (
         'rest_framework_simplejwt.authentication.JWTAuthentication',
@@ -124,3 +128,16 @@ SIMPLE_JWT = {
 
 SUPABASE_URL = env('SUPABASE_URL', default='')
 SUPABASE_ANON_KEY = env('SUPABASE_ANON_KEY', default='')
+
+GOOGLE_OAUTH_CLIENT_ID = env('GOOGLE_OAUTH_CLIENT_ID', default='')
+
+# Gmail SMTP email notifications
+EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
+EMAIL_HOST = 'smtp.gmail.com'
+EMAIL_PORT = 587
+EMAIL_USE_TLS = True
+EMAIL_HOST_USER = env('EMAIL_HOST_USER', default='')
+EMAIL_HOST_PASSWORD = env('EMAIL_HOST_PASSWORD', default='')
+DEFAULT_FROM_EMAIL = EMAIL_HOST_USER or 'noreply@helpdesk.local'
+EMAIL_NOTIFICATIONS_ENABLED = bool(EMAIL_HOST_USER and EMAIL_HOST_PASSWORD)
+FRONTEND_URL = env('FRONTEND_URL', default='http://localhost:5173')

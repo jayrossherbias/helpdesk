@@ -70,7 +70,7 @@ const NotificationRow: React.FC<{
   const bgCls  = isDark ? meta.darkBg   : meta.lightBg;
   const txtCls = isDark ? meta.darkText : meta.lightText;
   const brdCls = isDark ? meta.darkBorder : meta.lightBorder;
-  const cfg    = BRANCH_CONFIG[n.branch as Branch];
+  const cfg    = BRANCH_CONFIG[n.branch as Branch] ?? { dotClass: 'bg-slate-500', color: '#64748b', label: n.branch };
 
   return (
     <div
@@ -81,9 +81,9 @@ const NotificationRow: React.FC<{
       }`}
       onClick={() => onClick(n)}
     >
-      {/* Unread indicator */}
+      {/* Unread dot */}
       {!n.read && (
-        <span className="absolute left-2 top-1/2 -translate-y-1/2 w-1.5 h-1.5 rounded-full bg-blue-500" />
+        <span className="absolute right-6 top-1/2 -translate-y-1/2 w-1.5 h-1.5 rounded-full bg-blue-500" />
       )}
 
       {/* Type icon */}

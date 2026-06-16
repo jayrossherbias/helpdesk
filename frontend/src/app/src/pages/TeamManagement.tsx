@@ -309,7 +309,7 @@ export const TeamManagement = () => {
                       </div>
                     ) : (
                       techs.map(user => {
-                        const cfg = BRANCH_CONFIG[user.branch?.name as keyof typeof BRANCH_CONFIG];
+                        const cfg = BRANCH_CONFIG[user.branch?.name as keyof typeof BRANCH_CONFIG] ?? { dotClass: 'bg-slate-500', color: '#64748b', label: user.branch?.name ?? '' };
                         return (
                           <div
                             key={user.id}

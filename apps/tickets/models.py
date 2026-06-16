@@ -4,20 +4,16 @@ from django.db import models
 
 
 CATEGORY_CODES = {
-    'voip_dialer': 'VOIP',
-    'crm_software': 'CRM',
-    'workstation': 'WS',
-    'network': 'NET',
+    'voip_dialer':    'VIP',
+    'crm_software':   'CRM',
+    'workstation':    'WST',
+    'network':        'NET',
     'account_access': 'ACC',
 }
 
 BRANCH_CODES = {
-    'Main Branch':   'MAIN',
-    'Makati Branch': 'MKT',
-    'BGC Branch':    'BGC',
-    'Cebu Branch':   'CEB',
-    'Davao Branch':  'DAV',
-    'Manila Branch': 'MLA',
+    'Main Branch':      'MAIN',
+    'Victorias Branch': 'VIC',
 }
 
 
@@ -113,25 +109,41 @@ class Ticket(models.Model):
         blank=True,
         related_name='follow_ups',
     )
+    resolution_notes = models.TextField(blank=True, default='')
     sla_deadline = models.DateTimeField(null=True, blank=True)
+    resolved_at = models.DateTimeField(null=True, blank=True)
     escalated = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     @classmethod
     def generate_ticket_number(cls, category: str, submitter) -> str:
-        from apps.accounts.models import UserProfile
         branch_name = getattr(submitter.branch, 'name', '') if submitter.branch else ''
         branch_code = BRANCH_CODES.get(branch_name, 'GEN')
-        dept = getattr(submitter, 'department', '') or ''
-        dept_code = UserProfile.DEPARTMENT_CODES.get(dept, 'GEN')
-        prefix = f'{branch_code}-{dept_code}'
+        cat_code = CATEGORY_CODES.get(category, 'GEN')
+        prefix = f'{branch_code}-{cat_code}'
         seq = TicketCounter.next_for(prefix)
         return f'{prefix}-{seq:04d}'
 
     def __str__(self):
         priority = self.priority.upper() if self.priority else 'UNSET'
         return f'[{priority}] {self.title}'
+
+
+class SystemSettings(models.Model):
+    """Singleton — always pk=1. Stores global workflow toggle states."""
+    auto_routing        = models.BooleanField(default=True)
+    auto_priority       = models.BooleanField(default=True)
+    email_notifications = models.BooleanField(default=True)
+    sla_alerts          = models.BooleanField(default=True)
+
+    class Meta:
+        verbose_name = 'System Settings'
+
+    @classmethod
+    def get(cls):
+        obj, _ = cls.objects.get_or_create(pk=1)
+        return obj
 
 
 class TicketLog(models.Model):
