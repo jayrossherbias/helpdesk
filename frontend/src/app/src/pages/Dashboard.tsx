@@ -118,7 +118,7 @@ const BranchDashboard = () => {
   const openCount     = mine.filter(t => t.status === 'Open').length;
   const inProgCount   = mine.filter(t => t.status === 'In Progress').length;
   const pendingCount  = mine.filter(t => t.escalationStatus === 'Escalated').length;   // awaiting Main Branch
-  const resolvedToday = mine.filter(t => t.status === 'Resolved' && new Date(t.updatedAt).toDateString() === today).length;
+  const resolvedToday = mine.filter(t => t.status === 'Resolved' && t.resolvedAt && new Date(t.resolvedAt).toDateString() === today).length;
   const criticalOpen  = mine.filter(t => t.priority === 'Critical' && t.status !== 'Resolved').length;
   const floorWide     = mine.filter(t => t.isFloorWide && t.status !== 'Resolved');
 

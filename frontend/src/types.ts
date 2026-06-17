@@ -90,6 +90,7 @@ export interface Ticket {
   floor_team: string
   is_floor_wide: boolean
   escalated: boolean
+  escalation_resolved?: boolean
   escalation_logs: EscalationLog[]
   escalation_log?: EscalationLog | null
   logs?: TicketLogEntry[]

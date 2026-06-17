@@ -58,18 +58,25 @@ class TicketListSerializer(serializers.ModelSerializer):
     submitted_by = _UserSerializer(read_only=True)
     related_to = _RelatedTicketSerializer(read_only=True)
     sla_status = serializers.SerializerMethodField()
+    escalation_resolved = serializers.SerializerMethodField()
 
     class Meta:
         model = Ticket
         fields = (
             'id', 'ticket_number', 'title', 'category', 'priority', 'status', 'urgency',
             'branch', 'agents_affected', 'floor_team', 'is_floor_wide', 'sla_deadline', 'sla_status',
-            'assigned_to', 'submitted_by', 'escalated', 'shift', 'created_at', 'resolved_at',
-            'related_to', 'resolution_notes',
+            'assigned_to', 'submitted_by', 'escalated', 'escalation_resolved', 'shift', 'created_at',
+            'resolved_at', 'related_to', 'resolution_notes',
         )
 
     def get_sla_status(self, obj):
         return _compute_sla_status(obj)
+
+    def get_escalation_resolved(self, obj):
+        if not obj.escalated:
+            return False
+        log = obj.escalation_logs.order_by('-escalated_at').first()
+        return bool(log and log.resolved_at)
 
 
 class _TicketLogSerializer(serializers.ModelSerializer):

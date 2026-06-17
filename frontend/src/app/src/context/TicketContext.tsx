@@ -111,7 +111,7 @@ function mapApiTicket(t: ApiTicket): Ticket {
     relatedTo:      t.related_to ? mapRelated(t.related_to) : null,
     followUps:      (t.follow_ups ?? []).map(mapRelated),
     escalationStatus: t.escalated
-      ? (escalationLog?.resolved_at ? 'Resolved by Main Branch' : 'Escalated')
+      ? (escalationLog?.resolved_at || t.escalation_resolved ? 'Resolved by Main Branch' : 'Escalated')
       : 'Not Escalated',
     escalatedAt:    escalationLog?.escalated_at,
     escalationNotes: escalationLog?.reason,
