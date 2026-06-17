@@ -1,7 +1,10 @@
 from django.db.models import Count, Q
 
 
+# [OOP: Abstraction] Hides all routing complexity (keyword matching, load balancing, fallback)
+# behind a single method call — callers only need to call RoutingEngine.route(ticket)
 class RoutingEngine:
+    # [OOP: Static Method] No instance or class state needed; pure logic given a ticket object
     @staticmethod
     def route(ticket):
         from apps.routing.models import RoutingRule

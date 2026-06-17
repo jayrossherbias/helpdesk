@@ -6,6 +6,10 @@ CAN_CREATE_TICKET = {'agent', 'branch_technician', 'branch_supervisor'}
 CAN_VIEW_TICKETS = {'agent', 'branch_technician', 'branch_supervisor', 'main_it_supervisor', 'main_it_manager'}
 
 
+# [OOP: Inheritance] All permission classes extend BasePermission from Django REST Framework
+# [OOP: Polymorphism] DRF calls the same has_permission() on each; each responds with different role logic
+# [OOP: Method Overriding] Each class provides its own version of has_permission()
+
 class IsBranchTechnicianOrAbove(BasePermission):
     def has_permission(self, request, view):
         return request.user.is_authenticated and request.user.role in TECHNICIAN_AND_ABOVE

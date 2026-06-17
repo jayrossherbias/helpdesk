@@ -8,6 +8,9 @@ from apps.routing.engine import RoutingEngine
 from .models import Ticket, TicketLog, SystemSettings
 
 
+# [OOP: Observer Design Pattern] This function is registered as a listener on the Ticket model's
+# pre_save signal — it is automatically called whenever a Ticket is about to be saved,
+# without Ticket needing to explicitly call it (loose coupling between objects)
 @receiver(pre_save, sender=Ticket)
 def set_priority_and_sla(sender, instance, **kwargs):
     if instance._state.adding:
@@ -30,6 +33,8 @@ def set_priority_and_sla(sender, instance, **kwargs):
         instance.resolved_at = timezone.now()
 
 
+# [OOP: Observer Design Pattern] Registered on post_save — fires automatically after a Ticket
+# is saved; triggers auto-routing and critical ticket notifications without Ticket knowing about them
 @receiver(post_save, sender=Ticket)
 def auto_route_ticket(sender, instance, created, **kwargs):
     if not created:

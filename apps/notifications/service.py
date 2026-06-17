@@ -202,8 +202,11 @@ def _build_assignment_html(tech_name, ticket, sla, ticket_url):
 </html>"""
 
 
+# [OOP: Encapsulation] All notification logic (in-app and email) is bundled inside one class;
+# other parts of the system call notify_* methods without knowing how messages are built or sent
 class NotificationService:
 
+    # [OOP: Static Method] No instance or class state needed; sends an email given raw parameters
     @staticmethod
     def _send_email(to_email: str, subject: str, plain: str, html: str) -> None:
         from apps.tickets.models import SystemSettings
@@ -223,6 +226,7 @@ class NotificationService:
         except Exception as exc:
             logger.error('Email notification failed for %s: %s', to_email, exc)
 
+    # [OOP: Static Method] Each notify_* method is a stateless operation grouped here for organization
     @staticmethod
     def notify_assignment(ticket):
         if not ticket.assigned_to:

@@ -52,6 +52,7 @@ def _compute_sla_status(ticket):
     return 'on_track'
 
 
+# [OOP: Class / Encapsulation] Bundles ticket field definitions and serialization logic together
 class TicketListSerializer(serializers.ModelSerializer):
     branch = _BranchSerializer(read_only=True)
     assigned_to = _UserSerializer(read_only=True)
@@ -105,6 +106,7 @@ class _EscalationLogSerializer(serializers.ModelSerializer):
         return None
 
 
+# [OOP: Inheritance] Extends TicketListSerializer, reusing all list fields and adding detail-only fields
 class TicketDetailSerializer(TicketListSerializer):
     submitted_by = _UserSerializer(read_only=True)
     major_incident = _MajorIncidentSerializer(read_only=True)
@@ -112,6 +114,7 @@ class TicketDetailSerializer(TicketListSerializer):
     logs = _TicketLogSerializer(many=True, read_only=True)
     follow_ups = serializers.SerializerMethodField()
 
+    # [OOP: Method Overriding] Overrides the parent Meta class to extend the field list
     class Meta(TicketListSerializer.Meta):
         fields = TicketListSerializer.Meta.fields + (
             'description', 'floor_team', 'is_floor_wide',

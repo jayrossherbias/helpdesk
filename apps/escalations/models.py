@@ -3,6 +3,8 @@ from django.conf import settings
 from django.db import models
 
 
+# [OOP: Class / Composition] EscalationLog is composed with Ticket via ForeignKey —
+# it cannot exist without a parent Ticket, forming a dependent object relationship
 class EscalationLog(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     ticket = models.ForeignKey(
@@ -28,5 +30,6 @@ class EscalationLog(models.Model):
     resolved_at = models.DateTimeField(null=True, blank=True)
     notes = models.TextField(blank=True)
 
+    # [OOP: Method Overriding] Overrides __str__ from models.Model
     def __str__(self):
         return f'Escalation for ticket {self.ticket_id}'
