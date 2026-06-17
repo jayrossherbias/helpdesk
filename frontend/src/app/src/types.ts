@@ -17,17 +17,21 @@ export type Department =
   | 'back_office';
 export type Branch =
   | 'Main Branch'
-  | 'Victorias Branch';
+  | 'Victorias Branch'
+  | 'Bacolod Branch'
+  | 'Cebu Branch';
 export type Shift = 'Morning' | 'Afternoon' | 'Night';
 export type EscalationStatus = 'Not Escalated' | 'Escalated' | 'Resolved by Main Branch';
 
 export const BRANCHES: Branch[] = [
-  'Main Branch', 'Victorias Branch',
+  'Main Branch', 'Victorias Branch', 'Bacolod Branch', 'Cebu Branch',
 ];
 
 export const BRANCH_CONFIG: Record<Branch, { dotClass: string; color: string; label: string }> = {
   'Main Branch':      { dotClass: 'bg-blue-500',    color: '#3b82f6', label: 'Main Branch' },
   'Victorias Branch': { dotClass: 'bg-emerald-500', color: '#10b981', label: 'Victorias Branch' },
+  'Bacolod Branch':   { dotClass: 'bg-purple-500',  color: '#a855f7', label: 'Bacolod Branch' },
+  'Cebu Branch':      { dotClass: 'bg-orange-500',  color: '#f97316', label: 'Cebu Branch' },
 };
 
 export const BPO_CATEGORIES: Category[] = [

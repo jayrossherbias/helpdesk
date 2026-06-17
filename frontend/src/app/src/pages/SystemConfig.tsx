@@ -12,6 +12,12 @@ import { getBranches } from '../../../api/accounts';
 import { getSystemSettings, patchSystemSettings } from '../../../api/tickets';
 import type { RoutingRule, SlaConfig } from '../../../types';
 
+// ── Display-only branches (no backend records) ─────────────────
+const DISPLAY_ONLY_BRANCHES = [
+  { id: 'display-bacolod', name: 'Bacolod Branch', location: 'Bacolod City, Negros Occidental', is_main_branch: false, dotClass: 'bg-purple-500' },
+  { id: 'display-cebu',    name: 'Cebu Branch',    location: 'Cebu City, Cebu',                 is_main_branch: false, dotClass: 'bg-orange-500' },
+];
+
 // ── Category slug → display label ─────────────────────────────
 const CATEGORY_LABELS: Record<string, string> = {
   voip_dialer:    'VoIP & Dialer Issues',
@@ -518,66 +524,89 @@ export const SystemConfig = () => {
             <tbody className={`divide-y ${isDark ? 'divide-slate-800/60' : 'divide-gray-50'}`}>
               {branchesLoading
                 ? loadingRow(5)
-                : branches.map(branch => {
-                    const dotClass = branch.is_main_branch
-                      ? 'bg-blue-500'
-                      : 'bg-emerald-500';
-                    const agentCount    = branch.agent_count    ?? 0;
-                    const itStaffCount  = branch.it_staff_count ?? 0;
-                    return (
-                      <tr
-                        key={branch.id}
-                        className={`transition-colors ${isDark ? 'hover:bg-slate-800/30' : 'hover:bg-gray-50/80'}`}
-                      >
+                : <>
+                    {branches.map(branch => {
+                      const dotClass = branch.is_main_branch ? 'bg-blue-500' : 'bg-emerald-500';
+                      const agentCount   = branch.agent_count    ?? 0;
+                      const itStaffCount = branch.it_staff_count ?? 0;
+                      return (
+                        <tr key={branch.id} className={`transition-colors ${isDark ? 'hover:bg-slate-800/30' : 'hover:bg-gray-50/80'}`}>
+                          <td className="py-4 px-5">
+                            <div className="flex items-center gap-2.5">
+                              <span className={`w-3 h-3 rounded-full shrink-0 ${dotClass}`} />
+                              <span className={`font-medium ${isDark ? 'text-white' : 'text-gray-900'}`}>{branch.name}</span>
+                            </div>
+                          </td>
+                          <td className={`py-4 px-5 text-sm ${isDark ? 'text-slate-400' : 'text-gray-500'}`}>
+                            <div className="flex items-center gap-1.5">
+                              <Map size={12} className={isDark ? 'text-slate-600' : 'text-gray-300'} />
+                              {branch.location}
+                            </div>
+                          </td>
+                          <td className="py-4 px-5">
+                            <div className={`flex items-center gap-1.5 text-sm ${isDark ? 'text-slate-300' : 'text-gray-700'}`}>
+                              <Users size={13} className={isDark ? 'text-slate-600' : 'text-gray-300'} />
+                              <span className="font-medium">{agentCount}</span>
+                              <span className={isDark ? 'text-slate-600' : 'text-gray-400'}>agents</span>
+                            </div>
+                          </td>
+                          <td className="py-4 px-5">
+                            <div className="flex items-center gap-2">
+                              <div className={`flex items-center gap-1.5 ${isDark ? 'text-blue-400' : 'text-blue-600'}`}>
+                                <Building2 size={13} />
+                                <span className="font-medium text-sm">{itStaffCount}</span>
+                              </div>
+                              <span className={`text-xs ${isDark ? 'text-slate-600' : 'text-gray-400'}`}>staff</span>
+                              {agentCount > 0 && itStaffCount > 0 && (
+                                <span className={`text-xs ${isDark ? 'text-slate-600' : 'text-gray-300'}`}>
+                                  ({Math.round(agentCount / itStaffCount)} agents/tech)
+                                </span>
+                              )}
+                            </div>
+                          </td>
+                          <td className="py-4 px-5">
+                            <span className={`text-xs px-2.5 py-1 rounded-full border ${
+                              branch.is_main_branch
+                                ? isDark ? 'bg-blue-500/10 text-blue-400 border-blue-500/20'   : 'bg-blue-100 text-blue-700 border-blue-200'
+                                : isDark ? 'bg-green-500/10 text-green-400 border-green-500/20' : 'bg-green-100 text-green-700 border-green-200'
+                            }`}>
+                              {branch.is_main_branch ? 'HQ / Central' : 'Active'}
+                            </span>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                    {DISPLAY_ONLY_BRANCHES.map(branch => (
+                      <tr key={branch.id} className={`transition-colors ${isDark ? 'hover:bg-slate-800/30 opacity-60' : 'hover:bg-gray-50/80 opacity-60'}`}>
                         <td className="py-4 px-5">
                           <div className="flex items-center gap-2.5">
-                            <span className={`w-3 h-3 rounded-full shrink-0 ${dotClass}`} />
+                            <span className={`w-3 h-3 rounded-full shrink-0 ${branch.dotClass}`} />
                             <span className={`font-medium ${isDark ? 'text-white' : 'text-gray-900'}`}>{branch.name}</span>
                           </div>
                         </td>
-
                         <td className={`py-4 px-5 text-sm ${isDark ? 'text-slate-400' : 'text-gray-500'}`}>
                           <div className="flex items-center gap-1.5">
                             <Map size={12} className={isDark ? 'text-slate-600' : 'text-gray-300'} />
                             {branch.location}
                           </div>
                         </td>
-
                         <td className="py-4 px-5">
-                          <div className={`flex items-center gap-1.5 text-sm ${isDark ? 'text-slate-300' : 'text-gray-700'}`}>
+                          <div className={`flex items-center gap-1.5 text-sm ${isDark ? 'text-slate-500' : 'text-gray-400'}`}>
                             <Users size={13} className={isDark ? 'text-slate-600' : 'text-gray-300'} />
-                            <span className="font-medium">{agentCount}</span>
-                            <span className={isDark ? 'text-slate-600' : 'text-gray-400'}>agents</span>
+                            <span className="font-medium">—</span>
                           </div>
                         </td>
-
                         <td className="py-4 px-5">
-                          <div className="flex items-center gap-2">
-                            <div className={`flex items-center gap-1.5 ${isDark ? 'text-blue-400' : 'text-blue-600'}`}>
-                              <Building2 size={13} />
-                              <span className="font-medium text-sm">{itStaffCount}</span>
-                            </div>
-                            <span className={`text-xs ${isDark ? 'text-slate-600' : 'text-gray-400'}`}>staff</span>
-                            {agentCount > 0 && itStaffCount > 0 && (
-                              <span className={`text-xs ${isDark ? 'text-slate-600' : 'text-gray-300'}`}>
-                                ({Math.round(agentCount / itStaffCount)} agents/tech)
-                              </span>
-                            )}
-                          </div>
+                          <span className={`text-sm ${isDark ? 'text-slate-600' : 'text-gray-300'}`}>—</span>
                         </td>
-
                         <td className="py-4 px-5">
-                          <span className={`text-xs px-2.5 py-1 rounded-full border ${
-                            branch.is_main_branch
-                              ? isDark ? 'bg-blue-500/10 text-blue-400 border-blue-500/20'   : 'bg-blue-100 text-blue-700 border-blue-200'
-                              : isDark ? 'bg-green-500/10 text-green-400 border-green-500/20' : 'bg-green-100 text-green-700 border-green-200'
-                          }`}>
-                            {branch.is_main_branch ? 'HQ / Central' : 'Active'}
+                          <span className={`text-xs px-2.5 py-1 rounded-full border ${isDark ? 'bg-slate-800 text-slate-500 border-slate-700' : 'bg-gray-100 text-gray-400 border-gray-200'}`}>
+                            Coming Soon
                           </span>
                         </td>
                       </tr>
-                    );
-                  })
+                    ))}
+                  </>
               }
             </tbody>
           </table>
@@ -589,7 +618,7 @@ export const SystemConfig = () => {
             <div className="flex items-center gap-2">
               <Building2 size={14} className={isDark ? 'text-slate-500' : 'text-gray-400'} />
               <span className={`text-xs ${isDark ? 'text-slate-500' : 'text-gray-400'}`}>Total branches:</span>
-              <span className={`text-xs font-medium ${isDark ? 'text-white' : 'text-gray-900'}`}>{branches.length}</span>
+              <span className={`text-xs font-medium ${isDark ? 'text-white' : 'text-gray-900'}`}>{branches.length + DISPLAY_ONLY_BRANCHES.length}</span>
             </div>
             <div className="flex items-center gap-2">
               <Users size={14} className={isDark ? 'text-slate-500' : 'text-gray-400'} />
